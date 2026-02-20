@@ -70,6 +70,7 @@ python -m marp2video <input.md> [options]
 | `--hold-duration` | `3.0` | Seconds to hold slides with no notes |
 | `--fps` | `24` | Output video framerate |
 | `--temp-dir` | system temp | Directory for intermediate files |
+| `--pronunciations` | none | JSON file mapping words to phonetic respellings |
 | `--keep-temp` | off | Preserve intermediate files after rendering |
 
 ### Examples
@@ -91,7 +92,36 @@ python -m marp2video deck.md \
     --device cpu \
     --keep-temp \
     --temp-dir ./build
+
+# With pronunciation overrides
+python -m marp2video deck.md \
+    --voice ~/models/my-voice.wav \
+    --pronunciations pronunciations.json
 ```
+
+## Pronunciation Overrides
+
+The TTS engine sometimes mispronounces technical terms, acronyms, or proper
+nouns. You can fix this with a JSON file that maps words or phrases to phonetic
+respellings:
+
+```json
+{
+  "kubectl": "cube control",
+  "nginx": "engine X",
+  "PostgreSQL": "post gress Q L",
+  "Kubernetes": "koo ber net eez"
+}
+```
+
+Pass it with `--pronunciations`:
+
+```bash
+python -m marp2video deck.md --pronunciations pronunciations.json
+```
+
+Matching is case-insensitive. Longer phrases are matched first, so a multi-word
+key like `"Visual Studio Code"` will match before `"Code"` on its own.
 
 ## How It Works
 
