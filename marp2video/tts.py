@@ -8,6 +8,7 @@ import platform
 import re
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 from .utils import generate_silent_wav
@@ -141,7 +142,8 @@ def _generate_slide_audio(
     chunks: list = []
     try:
         for j, group in enumerate(sentence_groups):
-            with torch.no_grad():
+            with torch.no_grad(), warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*sdp_kernel.*", category=FutureWarning)
                 wav = model.generate(
                     group,
                     audio_prompt_path=voice_path,
@@ -262,11 +264,14 @@ def generate_audio_for_slides(
             print(f"  Slide {slide.index}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
 
             if interactive:
+                _play_audio(out_path)
                 while True:
-                    _play_audio(out_path)
-                    choice = input("  Keep this audio? [Y/n/q] ").strip().lower()
+                    choice = input("  (y) keep  (n) regenerate  (r) replay  (q) quit: ").strip().lower()
                     if choice in ("", "y"):
                         break
+                    if choice == "r":
+                        _play_audio(out_path)
+                        continue
                     if choice == "q":
                         print("  Quitting pipeline.")
                         sys.exit(0)
@@ -283,6 +288,7 @@ def generate_audio_for_slides(
                     del combined
                     _flush_gpu()
                     print(f"  Slide {slide.index}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
+                    _play_audio(out_path)
 
         audio_paths.append(out_path)
 

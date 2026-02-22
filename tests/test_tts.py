@@ -417,7 +417,7 @@ class TestInteractiveMode:
 
         with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
             with patch("marp2video.tts._load_model", return_value=mock_model), \
-                 patch("marp2video.tts._play_audio"), \
+                 patch("marp2video.tts._play_audio") as mock_play, \
                  patch("builtins.input", side_effect=["n", "y"]):
                 from marp2video.tts import generate_audio_for_slides
                 paths = generate_audio_for_slides(
@@ -428,6 +428,29 @@ class TestInteractiveMode:
         assert len(paths) == 1
         # generate called twice: original + regeneration
         assert mock_model.generate.call_count == 2
+        # play called twice: once for original, once after regeneration
+        assert mock_play.call_count == 2
+
+    def test_replay_then_accept(self, tmp_path):
+        """Pressing 'r' replays audio without regenerating, then 'y' keeps."""
+        slides = [self._make_slide(1, notes="Hello world.")]
+        mock_torch, mock_torchaudio, mock_model = self._setup_mocks()
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("marp2video.tts._load_model", return_value=mock_model), \
+                 patch("marp2video.tts._play_audio") as mock_play, \
+                 patch("builtins.input", side_effect=["r", "y"]):
+                from marp2video.tts import generate_audio_for_slides
+                paths = generate_audio_for_slides(
+                    slides, temp_dir=tmp_path, voice_path=None,
+                    hold_duration=2.0, interactive=True,
+                )
+
+        assert len(paths) == 1
+        # generate called only once (no regeneration)
+        assert mock_model.generate.call_count == 1
+        # play called twice: initial + replay
+        assert mock_play.call_count == 2
 
     def test_quit_exits(self, tmp_path):
         """Pressing 'q' exits the pipeline via SystemExit."""

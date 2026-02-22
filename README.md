@@ -80,6 +80,7 @@ python -m marp2video <input.md> [options]
 | `--temp-dir` | system temp | Directory for intermediate files |
 | `--pronunciations` | none | JSON file mapping words to phonetic respellings |
 | `--audio-padding` | `0` | Milliseconds of silence before and after each slide's audio |
+| `--interactive`, `-i` | off | Review and approve each slide's TTS audio before continuing |
 | `--keep-temp` | off | Preserve intermediate files after rendering |
 
 ### Examples
@@ -107,6 +108,24 @@ python -m marp2video deck.md \
     --voice ~/models/my-voice.wav \
     --pronunciations pronunciations.json
 ```
+
+## Interactive Mode
+
+Use `--interactive` (or `-i`) to review each slide's audio before moving on.
+After each slide is synthesized, the audio plays automatically and you're
+prompted:
+
+```
+(y) keep  (n) regenerate  (r) replay  (q) quit:
+```
+
+- **y** (or Enter) -- Accept the audio and continue to the next slide.
+- **n** -- Discard and regenerate the audio with a new TTS pass.
+- **r** -- Replay the current audio without regenerating.
+- **q** -- Quit the pipeline immediately.
+
+This is useful for catching bad TTS output early rather than waiting for the
+full pipeline to finish.
 
 ## Embedding Screencasts
 
