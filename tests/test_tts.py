@@ -112,13 +112,14 @@ class TestPlayAudio:
             _play_audio(p)
         mock_run.assert_called_once_with(["aplay", str(p)], capture_output=True)
 
-    def test_windows_uses_start(self, tmp_path):
+    def test_windows_uses_startfile(self, tmp_path):
         p = tmp_path / "test.wav"
         p.write_bytes(b"fake")
+        mock_startfile = MagicMock()
         with patch("marp2video.tts.platform.system", return_value="Windows"), \
-             patch("marp2video.tts.subprocess.run") as mock_run:
+             patch.dict("os.__dict__", {"startfile": mock_startfile}):
             _play_audio(p)
-        mock_run.assert_called_once_with(["cmd", "/c", "start", "", str(p)], capture_output=True)
+        mock_startfile.assert_called_once_with(str(p))
 
 
 # ---------------------------------------------------------------------------

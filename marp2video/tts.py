@@ -54,7 +54,9 @@ def _play_audio(path: Path) -> None:
     elif system == "Linux":
         cmd = ["aplay", str(path)]
     elif system == "Windows":
-        cmd = ["cmd", "/c", "start", "", str(path)]
+        import os
+        os.startfile(str(path))
+        return
     else:
         print(f"  Warning: don't know how to play audio on {system}", file=sys.stderr)
         return

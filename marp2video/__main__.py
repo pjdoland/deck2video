@@ -119,6 +119,9 @@ def main() -> None:
         for slide in slides:
             if slide.video:
                 vp = (input_dir / slide.video).resolve()
+                if not str(vp).startswith(str(input_dir.resolve()) + "/"):
+                    print(f"Error: video path escapes input directory: {slide.video}", file=sys.stderr)
+                    sys.exit(1)
                 if not vp.exists():
                     print(f"Error: video file not found: {vp}", file=sys.stderr)
                     sys.exit(1)
