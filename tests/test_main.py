@@ -220,6 +220,26 @@ class TestVideoPathResolution:
                 with pytest.raises(SystemExit):
                     main()
 
+    def test_video_path_traversal_exits(self, tmp_path):
+        """Video paths that escape the input directory should be rejected."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        slides = [Slide(index=1, body="body", notes=None, video="../../etc/passwd")]
+        patches = _patch_pipeline(**{
+            "marp2video.__main__.parse_marp": MagicMock(return_value=slides),
+        })
+
+        import contextlib
+        from marp2video.__main__ import main
+
+        with patch("sys.argv", ["marp2video", str(md)]):
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                with pytest.raises(SystemExit):
+                    main()
+
 
 # ---------------------------------------------------------------------------
 # FPS auto-detection
@@ -399,3 +419,68 @@ class TestFormatRouting:
         mocks = self._run_main(["marp2video", str(md)], patches)
         mocks["marp2video.__main__.parse_slidev"].assert_called_once()
         mocks["marp2video.__main__.render_slidev_slides"].assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline failure and --keep-temp
+# ---------------------------------------------------------------------------
+
+class TestPipelineFailure:
+    def test_pipeline_failure_preserves_temp_and_reraises(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        patches = _patch_pipeline(**{
+            "marp2video.__main__.assemble_video": MagicMock(
+                side_effect=RuntimeError("ffmpeg exploded")
+            ),
+        })
+
+        import contextlib
+        from marp2video.__main__ import main
+
+        with patch("sys.argv", ["marp2video", str(md)]):
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                with pytest.raises(RuntimeError, match="ffmpeg exploded"):
+                    main()
+
+    def test_keep_temp_preserves_files(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        patches = _patch_pipeline()
+
+        import contextlib
+        from marp2video.__main__ import main
+
+        with patch("sys.argv", ["marp2video", str(md), "--keep-temp",
+                                 "--temp-dir", str(tmp_path / "build")]):
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                main()
+
+        # Temp dir should still exist
+        assert (tmp_path / "build").exists()
+
+    def test_keep_temp_prints_message(self, tmp_path, capsys):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+        build_dir = tmp_path / "kept"
+
+        patches = _patch_pipeline()
+
+        import contextlib
+        from marp2video.__main__ import main
+
+        with patch("sys.argv", ["marp2video", str(md), "--keep-temp",
+                                 "--temp-dir", str(build_dir)]):
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                main()
+
+        captured = capsys.readouterr()
+        assert "Temp files kept at:" in captured.out

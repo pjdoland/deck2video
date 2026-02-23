@@ -121,6 +121,16 @@ class TestPlayAudio:
             _play_audio(p)
         mock_startfile.assert_called_once_with(str(p))
 
+    def test_unknown_platform_warns(self, tmp_path, capsys):
+        p = tmp_path / "test.wav"
+        p.write_bytes(b"fake")
+        with patch("marp2video.tts.platform.system", return_value="HaikuOS"), \
+             patch("marp2video.tts.subprocess.run") as mock_run:
+            _play_audio(p)
+        mock_run.assert_not_called()
+        captured = capsys.readouterr()
+        assert "don't know how to play audio" in captured.err
+
 
 # ---------------------------------------------------------------------------
 # _split_sentences
@@ -487,3 +497,260 @@ class TestInteractiveMode:
         assert len(paths) == 1
         mock_play.assert_not_called()
         mock_input.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _load_model
+# ---------------------------------------------------------------------------
+
+class TestLoadModel:
+    def test_load_model_calls_from_pretrained(self):
+        from marp2video.tts import _load_model
+
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torchaudio = MagicMock()
+        mock_chatterbox_tts = MagicMock()
+        mock_chatterbox_mod = MagicMock()
+        mock_chatterbox_mod.ChatterboxTTS = mock_chatterbox_tts
+
+        with patch.dict("sys.modules", {
+            "torch": mock_torch,
+            "torchaudio": mock_torchaudio,
+            "chatterbox": MagicMock(),
+            "chatterbox.tts": mock_chatterbox_mod,
+        }):
+            _load_model("cpu")
+            mock_chatterbox_tts.from_pretrained.assert_called_once_with(device="cpu")
+
+
+# ---------------------------------------------------------------------------
+# _move_model_to_cpu
+# ---------------------------------------------------------------------------
+
+class TestMoveModelToCpu:
+    def test_moves_all_components_to_cpu(self):
+        from marp2video.tts import _move_model_to_cpu
+
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torch.cuda.is_available.return_value = False
+
+        model = MagicMock()
+        model.conds = MagicMock()
+
+        with patch.dict("sys.modules", {"torch": mock_torch}):
+            _move_model_to_cpu(model)
+
+        model.t3.to.assert_called_once_with("cpu")
+        model.s3gen.to.assert_called_once_with("cpu")
+        model.ve.to.assert_called_once_with("cpu")
+        model.conds.to.assert_called_once_with("cpu")
+        assert model.device == "cpu"
+
+    def test_skips_none_conds(self):
+        from marp2video.tts import _move_model_to_cpu
+
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torch.cuda.is_available.return_value = False
+
+        model = MagicMock()
+        model.conds = None
+
+        with patch.dict("sys.modules", {"torch": mock_torch}):
+            _move_model_to_cpu(model)
+
+        model.t3.to.assert_called_once_with("cpu")
+        assert model.device == "cpu"
+
+    def test_clears_mps_cache(self):
+        from marp2video.tts import _move_model_to_cpu
+
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = True
+        mock_torch.cuda.is_available.return_value = False
+
+        model = MagicMock()
+        model.conds = None
+
+        with patch.dict("sys.modules", {"torch": mock_torch}):
+            _move_model_to_cpu(model)
+
+        mock_torch.mps.empty_cache.assert_called_once()
+
+    def test_clears_cuda_cache(self):
+        from marp2video.tts import _move_model_to_cpu
+
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torch.cuda.is_available.return_value = True
+
+        model = MagicMock()
+        model.conds = None
+
+        with patch.dict("sys.modules", {"torch": mock_torch}):
+            _move_model_to_cpu(model)
+
+        mock_torch.cuda.empty_cache.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Multi-chunk TTS and GPU flush/OOM paths
+# ---------------------------------------------------------------------------
+
+class TestMultiChunkAndOOM:
+    def _make_slide(self, index, notes=None):
+        from marp2video.models import Slide
+        return Slide(index=index, body="body", notes=notes)
+
+    def _setup_mocks(self, on_gpu=False):
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = on_gpu
+        mock_torch.cuda.is_available.return_value = False
+        mock_torchaudio = MagicMock()
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.device = "mps" if on_gpu else "cpu"
+        mock_model.generate.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.zeros.return_value.cpu.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.cat.return_value = mock_torch.zeros(1, 24000)
+
+        return mock_torch, mock_torchaudio, mock_model
+
+    def test_multi_chunk_progress(self, tmp_path, capsys):
+        """Notes with 4+ sentences produce multiple chunks and print progress."""
+        notes = "One. Two. Three. Four."  # 4 sentences -> 2 chunks
+        slides = [self._make_slide(1, notes=notes)]
+        mock_torch, mock_torchaudio, mock_model = self._setup_mocks()
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("marp2video.tts._load_model", return_value=mock_model):
+                from marp2video.tts import generate_audio_for_slides
+                generate_audio_for_slides(
+                    slides, temp_dir=tmp_path, voice_path=None, hold_duration=2.0,
+                )
+
+        captured = capsys.readouterr()
+        assert "chunk 1/2" in captured.out
+        assert "chunk 2/2" in captured.out
+
+    def test_gpu_oom_falls_back_to_cpu(self, tmp_path):
+        """OOM on GPU triggers _move_model_to_cpu and retries."""
+        slides = [self._make_slide(1, notes="Hello.")]
+        mock_torch, mock_torchaudio, mock_model = self._setup_mocks(on_gpu=True)
+
+        call_count = 0
+        def generate_side_effect(text, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("MPS backend out of memory")
+            return mock_torch.zeros(1, 24000)
+
+        mock_model.generate.side_effect = generate_side_effect
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("marp2video.tts._load_model", return_value=mock_model), \
+                 patch("marp2video.tts._move_model_to_cpu") as mock_move:
+                from marp2video.tts import generate_audio_for_slides
+                paths = generate_audio_for_slides(
+                    slides, temp_dir=tmp_path, voice_path=None, hold_duration=2.0,
+                )
+
+        mock_move.assert_called_once()
+        assert len(paths) == 1
+
+    def test_gpu_oom_cpu_retry_also_fails(self, tmp_path):
+        """OOM on GPU, then failure on CPU -> silent WAV."""
+        slides = [self._make_slide(1, notes="Hello.")]
+        mock_torch, mock_torchaudio, mock_model = self._setup_mocks(on_gpu=True)
+
+        mock_model.generate.side_effect = RuntimeError("MPS backend out of memory")
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("marp2video.tts._load_model", return_value=mock_model), \
+                 patch("marp2video.tts._move_model_to_cpu"):
+                from marp2video.tts import generate_audio_for_slides
+                paths = generate_audio_for_slides(
+                    slides, temp_dir=tmp_path, voice_path=None, hold_duration=3.0,
+                )
+
+        assert len(paths) == 1
+        assert paths[0].read_bytes()[:4] == b"RIFF"
+
+    def test_flush_gpu_clears_caches(self, tmp_path):
+        """When running on GPU, _flush_gpu should call cache clearing."""
+        slides = [self._make_slide(1, notes="Hello.")]
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = True
+        mock_torch.cuda.is_available.return_value = True
+        mock_torchaudio = MagicMock()
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.device = "mps"
+        mock_model.generate.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.zeros.return_value.cpu.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.cat.return_value = mock_torch.zeros(1, 24000)
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("marp2video.tts._load_model", return_value=mock_model):
+                from marp2video.tts import generate_audio_for_slides
+                generate_audio_for_slides(
+                    slides, temp_dir=tmp_path, voice_path=None, hold_duration=2.0,
+                )
+
+        mock_torch.mps.empty_cache.assert_called()
+        mock_torch.cuda.empty_cache.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Interactive regeneration failure
+# ---------------------------------------------------------------------------
+
+class TestInteractiveRegenFailure:
+    def _make_slide(self, index, notes=None):
+        from marp2video.models import Slide
+        return Slide(index=index, body="body", notes=notes)
+
+    def test_regen_failure_keeps_previous_audio(self, tmp_path, capsys):
+        """When regeneration fails, keep previous audio and move on."""
+        slides = [self._make_slide(1, notes="Hello.")]
+
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torch.cuda.is_available.return_value = False
+        mock_torchaudio = MagicMock()
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.device = "cpu"
+
+        call_count = 0
+        def generate_side_effect(text, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("regen broke")
+            return mock_torch.zeros(1, 24000)
+
+        mock_model.generate.side_effect = generate_side_effect
+        mock_torch.zeros.return_value.cpu.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.cat.return_value = mock_torch.zeros(1, 24000)
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("marp2video.tts._load_model", return_value=mock_model), \
+                 patch("marp2video.tts._play_audio"), \
+                 patch("builtins.input", side_effect=["n", "y"]):
+                from marp2video.tts import generate_audio_for_slides
+                paths = generate_audio_for_slides(
+                    slides, temp_dir=tmp_path, voice_path=None,
+                    hold_duration=2.0, interactive=True,
+                )
+
+        assert len(paths) == 1
+        captured = capsys.readouterr()
+        assert "Regeneration failed" in captured.err
