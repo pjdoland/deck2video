@@ -5,6 +5,8 @@ narrated video. Write your slides in Markdown, add speaker notes as HTML
 comments, and deck2video handles the rest: rendering, text-to-speech with voice
 cloning, and final MP4 assembly. The presentation format is auto-detected.
 
+[![Watch the demo](https://img.youtube.com/vi/6T1b-fIO3cw/hqdefault.jpg)](https://www.youtube.com/watch?v=6T1b-fIO3cw)
+
 ## Quick Start
 
 ```bash
