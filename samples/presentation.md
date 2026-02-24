@@ -177,7 +177,7 @@ Run one command. Get a narrated video.
                                           → PNG       slide        → concat
 ```
 
-<!-- Under the hood it's a four-stage pipeline with an auto-detection step up front. The tool looks at your frontmatter and directive comments to figure out whether you're using Marp or Slidev. Then it parses the Markdown, renders slides as PNGs with the appropriate CLI, synthesizes audio with Chatterbox TTS, and stitches it all together with ffmpeg. If you give it a short sample of your voice, the TTS clones you. It's not perfect, but it's surprisingly good. Let me walk through each stage. -->
+<!-- Under the hood it's a four-stage pipeline with an automatic format detection step up front. The tool looks at your frontmatter and directive comments to figure out whether you're using Marp or Slidev. Then it parses the Markdown, renders slides as PNGs with the appropriate CLI, synthesizes audio with Chatterbox TTS, and stitches it all together with ffmpeg. If you give it a short sample of your voice, the TTS clones you. It's not perfect, but it's surprisingly good. Let me walk through each stage. -->
 
 ---
 
@@ -326,4 +326,4 @@ https://github.com/pjdoland/deck2video
 
 *Questions?*
 
-<!-- So here's the actual time breakdown. One hour at Cue Recording Studios in Falls Church, Virginia, getting a studio-quality recording of my voice. That cost eighty-five bucks. Two and a half hours with Claude Code building the entire pipeline, start to finish. And about thirty minutes writing this presentation, mostly just editing text files in Vim with Claude helping. Then I kicked off the generation and walked away. That's it. The repo is on GitHub if you want to try it. I'm happy to walk through the setup or answer questions. Thanks……… -->
+<!-- So here's the actual time breakdown. One hour at Cue Recording Studios in Falls Church, Virginia, getting a studio-quality recording of my voice. That cost eighty-five bucks. Two and a half hours with Claude Code building the entire pipeline, start to finish. And about thirty minutes writing this presentation, mostly just editing text files in Vim with Claude helping. Then I kicked off the generation and walked away. That's it. The repo is on GitHub if you want to try it. I'm happy to walk through the setup or answer questions. Thank you for your time. -->

@@ -157,7 +157,7 @@ def assemble_video(
     concat_file = temp_dir / "concat.txt"
     with open(concat_file, "w") as f:
         for seg in segments:
-            f.write(f"file '{seg}'\n")
+            f.write(f"file '{seg.name}'\n")
     logger.debug("Concat file contents:\n%s", "\n".join(f"file '{seg}'" for seg in segments))
 
     cmd = [

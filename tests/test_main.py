@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deck2video.__main__ import _discover_temp_files, _parse_slide_list, _resolve_videos_and_fps
 from deck2video.models import Slide
 
 
@@ -39,6 +40,7 @@ def _patch_pipeline(**overrides):
             Path("/tmp/audio_001.wav"), Path("/tmp/audio_002.wav"),
         ]),
         "deck2video.__main__.assemble_video": MagicMock(),
+        "deck2video.__main__.get_video_fps": MagicMock(return_value=30.0),
     }
     defaults.update(overrides)
     return defaults
@@ -484,3 +486,351 @@ class TestPipelineFailure:
 
         captured = capsys.readouterr()
         assert "Temp files kept at:" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# _discover_temp_files helper
+# ---------------------------------------------------------------------------
+
+class TestDiscoverTempFiles:
+    def test_finds_slidev_images_and_audio(self, tmp_path):
+        for i in range(1, 4):
+            (tmp_path / f"slides.{i:03d}.png").touch()
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, audio = _discover_temp_files(tmp_path)
+        assert len(images) == 3
+        assert len(audio) == 3
+        assert all(p.suffix == ".png" for p in images)
+
+    def test_finds_marp_images_and_audio(self, tmp_path):
+        for i in range(1, 3):
+            (tmp_path / f"slides.{i:03d}").touch()
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, audio = _discover_temp_files(tmp_path)
+        assert len(images) == 2
+        assert len(audio) == 2
+
+    def test_prefers_slidev_over_marp(self, tmp_path):
+        """If both .png and extensionless exist, picks .png (Slidev)."""
+        for i in range(1, 3):
+            (tmp_path / f"slides.{i:03d}.png").touch()
+            (tmp_path / f"slides.{i:03d}").touch()
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, _ = _discover_temp_files(tmp_path)
+        assert all(p.suffix == ".png" for p in images)
+
+    def test_no_images_exits(self, tmp_path):
+        (tmp_path / "audio_001.wav").touch()
+        with pytest.raises(SystemExit):
+            _discover_temp_files(tmp_path)
+
+    def test_no_audio_exits(self, tmp_path):
+        (tmp_path / "slides.001.png").touch()
+        with pytest.raises(SystemExit):
+            _discover_temp_files(tmp_path)
+
+    def test_count_mismatch_exits(self, tmp_path):
+        (tmp_path / "slides.001.png").touch()
+        (tmp_path / "slides.002.png").touch()
+        (tmp_path / "audio_001.wav").touch()
+        with pytest.raises(SystemExit):
+            _discover_temp_files(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# _parse_slide_list helper
+# ---------------------------------------------------------------------------
+
+class TestParseSlideList:
+    def test_single_slide(self):
+        assert _parse_slide_list("3") == [3]
+
+    def test_multiple_slides(self):
+        assert _parse_slide_list("2,3,7") == [2, 3, 7]
+
+    def test_deduplicates_and_sorts(self):
+        assert _parse_slide_list("7,2,2,3") == [2, 3, 7]
+
+    def test_invalid_input_exits(self):
+        with pytest.raises(SystemExit):
+            _parse_slide_list("a,b,c")
+
+    def test_zero_index_exits(self):
+        with pytest.raises(SystemExit):
+            _parse_slide_list("0,1,2")
+
+
+# ---------------------------------------------------------------------------
+# --reassemble mode
+# ---------------------------------------------------------------------------
+
+class TestReassembleMode:
+    def _run_main(self, argv, patches):
+        import contextlib
+        from deck2video.__main__ import main
+
+        with patch("sys.argv", argv):
+            with contextlib.ExitStack() as stack:
+                mocks = {}
+                for target, mock_obj in patches.items():
+                    mocks[target] = stack.enter_context(patch(target, mock_obj))
+                main()
+                return mocks
+
+    def test_reassemble_requires_temp_dir(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        from deck2video.__main__ import main
+        with patch("sys.argv", ["deck2video", str(md), "--reassemble"]):
+            with patch("deck2video.__main__.check_ffmpeg"):
+                with pytest.raises(SystemExit):
+                    main()
+
+    def test_reassemble_skips_render_tts(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        patches = _patch_pipeline()
+        mocks = self._run_main(
+            ["deck2video", str(md), "--reassemble", "--temp-dir", str(temp)],
+            patches,
+        )
+
+        # Parse IS called (to resolve video paths and detect FPS)
+        mocks["deck2video.__main__.parse_marp"].assert_called_once()
+
+        # Render and TTS should NOT be called
+        mocks["deck2video.__main__.render_slides"].assert_not_called()
+        mocks["deck2video.__main__.render_slidev_slides"].assert_not_called()
+        mocks["deck2video.__main__.generate_audio_for_slides"].assert_not_called()
+
+        # Assemble SHOULD be called
+        mocks["deck2video.__main__.assemble_video"].assert_called_once()
+
+    def test_reassemble_passes_discovered_files(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide 1\n\n---\n\n# Slide 2\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        patches = _patch_pipeline()
+        mocks = self._run_main(
+            ["deck2video", str(md), "--reassemble", "--temp-dir", str(temp)],
+            patches,
+        )
+
+        call_args = mocks["deck2video.__main__.assemble_video"].call_args
+        images_arg = call_args[0][0]
+        audio_arg = call_args[0][1]
+        assert len(images_arg) == 2
+        assert len(audio_arg) == 2
+
+    def test_reassemble_passes_videos_and_detects_fps(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        # Create a video file
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        video_file = assets / "demo.mov"
+        video_file.touch()
+
+        slides = [
+            Slide(index=1, body="body", notes="Hello", video="assets/demo.mov"),
+            Slide(index=2, body="body", notes=None, video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_marp": MagicMock(return_value=slides),
+            "deck2video.__main__.get_video_fps": MagicMock(return_value=60.0),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--reassemble", "--temp-dir", str(temp)],
+            patches,
+        )
+
+        assemble_call = mocks["deck2video.__main__.assemble_video"]
+        call_kwargs = assemble_call.call_args[1]
+        assert call_kwargs["videos"][0] == video_file.resolve()
+        assert call_kwargs["videos"][1] is None
+        assert call_kwargs["fps"] == 60
+
+    def test_reassemble_requires_input_file(self, tmp_path):
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        from deck2video.__main__ import main
+        with patch("sys.argv", ["deck2video", str(tmp_path / "missing.md"),
+                                 "--reassemble", "--temp-dir", str(temp)]):
+            with patch("deck2video.__main__.check_ffmpeg"):
+                with pytest.raises(SystemExit):
+                    main()
+
+
+# ---------------------------------------------------------------------------
+# --redo-slides mode
+# ---------------------------------------------------------------------------
+
+class TestRedoSlidesMode:
+    def _run_main(self, argv, patches):
+        import contextlib
+        from deck2video.__main__ import main
+
+        with patch("sys.argv", argv):
+            with contextlib.ExitStack() as stack:
+                mocks = {}
+                for target, mock_obj in patches.items():
+                    mocks[target] = stack.enter_context(patch(target, mock_obj))
+                main()
+                return mocks
+
+    def test_redo_slides_requires_temp_dir(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        from deck2video.__main__ import main
+        with patch("sys.argv", ["deck2video", str(md), "--redo-slides", "1"]):
+            with patch("deck2video.__main__.check_ffmpeg"):
+                with pytest.raises(SystemExit):
+                    main()
+
+    def test_redo_slides_requires_input_file(self, tmp_path):
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        from deck2video.__main__ import main
+        with patch("sys.argv", ["deck2video", str(tmp_path / "missing.md"),
+                                 "--redo-slides", "1", "--temp-dir", str(temp)]):
+            with patch("deck2video.__main__.check_ffmpeg"):
+                with pytest.raises(SystemExit):
+                    main()
+
+    def test_redo_slides_regenerates_selected_and_assembles(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide 1\n<!-- Hello -->\n\n---\n\n# Slide 2\n<!-- World -->\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        slides = [
+            Slide(index=1, body="# Slide 1", notes="Hello", video=None),
+            Slide(index=2, body="# Slide 2", notes="World", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_marp": MagicMock(return_value=slides),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--redo-slides", "2",
+             "--temp-dir", str(temp), "--voice", "voice.wav"],
+            patches,
+        )
+
+        # TTS should be called with only slide 2
+        gen_call = mocks["deck2video.__main__.generate_audio_for_slides"]
+        gen_call.assert_called_once()
+        slides_arg = gen_call.call_args[0][0]
+        assert len(slides_arg) == 1
+        assert slides_arg[0].index == 2
+
+        # Render should NOT be called
+        mocks["deck2video.__main__.render_slides"].assert_not_called()
+
+        # Assemble should be called
+        mocks["deck2video.__main__.assemble_video"].assert_called_once()
+
+    def test_redo_slides_passes_videos_and_detects_fps(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide 1\n<!-- Hello -->\n\n---\n\n# Slide 2\n<!-- World -->\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        # Create a video file
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        video_file = assets / "demo.mov"
+        video_file.touch()
+
+        slides = [
+            Slide(index=1, body="# Slide 1", notes="Hello", video="assets/demo.mov"),
+            Slide(index=2, body="# Slide 2", notes="World", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_marp": MagicMock(return_value=slides),
+            "deck2video.__main__.get_video_fps": MagicMock(return_value=30.0),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--redo-slides", "2",
+             "--temp-dir", str(temp), "--voice", "voice.wav"],
+            patches,
+        )
+
+        assemble_call = mocks["deck2video.__main__.assemble_video"]
+        call_kwargs = assemble_call.call_args[1]
+        assert call_kwargs["videos"][0] == video_file.resolve()
+        assert call_kwargs["videos"][1] is None
+        assert call_kwargs["fps"] == 30
+
+    def test_redo_slides_invalid_index_exits(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide 1\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        (temp / "slides.001.png").touch()
+        (temp / "audio_001.wav").touch()
+
+        slides = [Slide(index=1, body="# Slide 1", notes="Hello", video=None)]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_marp": MagicMock(return_value=slides),
+        })
+
+        import contextlib
+        from deck2video.__main__ import main
+
+        with patch("sys.argv", ["deck2video", str(md), "--redo-slides", "5",
+                                 "--temp-dir", str(temp)]):
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                with pytest.raises(SystemExit):
+                    main()
+
+    def test_reassemble_and_redo_slides_mutually_exclusive(self, tmp_path):
+        """argparse should reject both flags together."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        from deck2video.__main__ import main
+        with patch("sys.argv", ["deck2video", str(md), "--reassemble",
+                                 "--redo-slides", "1", "--temp-dir", str(tmp_path)]):
+            with pytest.raises(SystemExit):
+                main()
