@@ -23,8 +23,24 @@ Same as above, but for Slidev presentations.
 
 ```bash
 npm install -g @slidev/cli
-npx playwright install chromium   # Required for Slidev PNG export
+npm install -g playwright-chromium   # npm package Slidev imports at runtime
+npx playwright install chromium      # Downloads the Chromium browser binary
 ```
+
+Both `playwright-chromium` steps are required. `npm install -g playwright-chromium` installs the Node package that Slidev imports; `npx playwright install chromium` downloads the actual browser binary used to render slides. Missing either one causes export to fail.
+
+## "The exporting for Slidev is powered by Playwright, please install it via `npm i -D playwright-chromium`"
+
+Slidev can't find the `playwright-chromium` npm package. Because Slidev is installed globally, the package must also be installed globally (not locally with `-D`).
+
+**Fix:**
+
+```bash
+npm install -g playwright-chromium
+npx playwright install chromium
+```
+
+After installing, re-run `setup.sh` and it will verify the installation is complete.
 
 ## "ffmpeg not found" / "ffprobe not found"
 
@@ -47,11 +63,13 @@ Error: parsed 5 slides but marp-cli produced 3 images.
 
 This means the parser found a different number of slides than the renderer produced. Common causes:
 
-1. **Extra `---` delimiters.** A `---` inside a code block or at an unexpected position can create phantom slides during parsing. Check your markdown for stray horizontal rules.
+1. **Slidev per-slide frontmatter.** In Slidev, a slide with layout options uses a two-`---` block: `---\nlayout: section\n---`. The parser treats this as one separator. If you see a count mismatch where the parser finds more slides than Slidev exports, check for per-slide frontmatter blocks that aren't being collapsed correctly.
 
-2. **Frontmatter issues.** If the frontmatter block isn't properly closed with `---`, the parser may miscount.
+2. **Extra `---` delimiters.** A `---` inside a code block or at an unexpected position can create phantom slides during parsing. Check your markdown for stray horizontal rules.
 
-3. **Renderer behavior differences.** Marp-cli and Slidev may handle edge cases (empty slides, trailing delimiters) differently from the parser.
+3. **Frontmatter issues.** If the frontmatter block isn't properly closed with `---`, the parser may miscount.
+
+4. **Renderer behavior differences.** Marp-cli and Slidev may handle edge cases (empty slides, trailing delimiters) differently from the parser.
 
 **Fix:** Inspect your markdown for stray `---` lines. Use `--keep-temp` to see the rendered images and compare with your expected slide count.
 
@@ -121,7 +139,7 @@ Error encountered. Temp files preserved at: /tmp/deck2video_abc123
 |------|-------------|
 | `deck2video.log` | Detailed debug log of the entire pipeline run |
 | `slides.001` | Rendered PNG for slide 1 (Marp, no extension) |
-| `slides.001.png` | Rendered PNG for slide 1 (Slidev, with extension) |
+| `slides/1.png` | Rendered PNG for slide 1 (Slidev — exported to a subdirectory) |
 | `audio_001.wav` | TTS audio for slide 1 |
 | `audio_002.wav` | TTS audio for slide 2 (or silence) |
 | `segment_001.ts` | Encoded MPEG-TS video segment for slide 1 |
@@ -133,7 +151,7 @@ Error encountered. Temp files preserved at: /tmp/deck2video_abc123
 - All indices are zero-padded to 3 digits: `001`, `002`, ..., `999`.
 - Slide numbering starts at 1 (matching the slide index in output messages).
 - Audio files: `audio_{index}.wav`
-- Image files: `slides.{index}` (Marp) or `slides.{index}.png` (Slidev)
+- Image files: `slides.{index}` (Marp) or `slides/{index}.png` (Slidev — in a subdirectory, not zero-padded)
 - Segments: `segment_{index}.ts`
 
 ### Inspecting the log file

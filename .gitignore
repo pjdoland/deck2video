@@ -6,3 +6,7 @@ __pycache__/
 !samples/presentation.mp4
 *.wav
 *.ts
+samples/get-noticed.md
+node_modules/
+package.json
+package-lock.json

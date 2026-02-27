@@ -27,10 +27,15 @@ def _discover_temp_files(temp_dir: Path) -> tuple[list[Path], list[Path]]:
 
     Returns (images, audio_files) sorted by index. Raises SystemExit on mismatch.
     """
-    # Try Slidev-style first (with .png extension), then Marp-style (no extension)
-    images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9].png"))
-    if not images:
-        images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9]"))
+    # Try Slidev v52+ style first (slides/1.png, slides/2.png, …)
+    slides_subdir = temp_dir / "slides"
+    if slides_subdir.is_dir():
+        images = sorted(slides_subdir.glob("*.png"), key=lambda p: int(p.stem))
+    else:
+        # Older Slidev style (slides.001.png) then Marp-style (no extension)
+        images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9].png"))
+        if not images:
+            images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9]"))
 
     audio_files = sorted(temp_dir.glob("audio_[0-9][0-9][0-9].wav"))
 

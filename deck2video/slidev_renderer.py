@@ -50,15 +50,18 @@ def render_slidev_slides(
 
     logger.debug("slidev command: %s", " ".join(cmd))
     print(f"  Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    logger.debug("slidev stdout: %s", result.stdout)
+    result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
     logger.debug("slidev stderr: %s", result.stderr)
     if result.returncode != 0:
         print("slidev stderr:", result.stderr, file=sys.stderr)
         raise RuntimeError(f"slidev export exited with code {result.returncode}")
 
-    # Slidev export produces slides.001.png, slides.002.png, …
-    images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9].png"))
+    # Slidev export produces a slides/ subdirectory with 1.png, 2.png, …
+    # Sort numerically so slide 10 comes after 9, not after 1.
+    images = sorted(
+        (temp_dir / "slides").glob("*.png"),
+        key=lambda p: int(p.stem),
+    )
     logger.debug("Rendered %d image(s): %s", len(images), images)
 
     if len(images) != expected_count:

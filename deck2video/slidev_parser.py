@@ -28,8 +28,15 @@ def parse_slidev(path: str) -> list[Slide]:
     with open(path, encoding="utf-8") as f:
         raw = f.read()
 
-    # Split on lines that are exactly "---" (possibly with surrounding whitespace).
-    parts = re.split(r"\n---\s*\n", raw)
+    # Split on Slidev slide separators.  A separator is either a bare "---" line
+    # or a "---" followed by per-slide YAML frontmatter and a closing "---":
+    #   \n---\n
+    #   \n---\n<key: value lines>\n---\n
+    # Both forms count as ONE slide boundary so frontmatter slides aren't
+    # counted as extra slides.
+    parts = re.split(
+        r"\n---\s*\n(?:(?:[ \t]*[\w][\w-]*[ \t]*:.*\n)+---\s*\n)?", raw
+    )
 
     # The first part is the YAML front-matter block — skip it.
     if len(parts) < 2:

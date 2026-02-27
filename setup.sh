@@ -49,14 +49,36 @@ fi
 # ── Slidev support (optional) ──────────────────────────────────────────────
 
 INSTALL_SLIDEV=false
+INSTALL_PLAYWRIGHT=false
+
 if check_cmd slidev; then
     info "slidev (global)"
+    # Slidev requires two separate Playwright pieces for PNG export:
+    #   1. playwright-chromium npm package (globally importable by Slidev)
+    #   2. The Chromium browser binary (downloaded by `playwright install`)
+    # Check for both and offer to fix if missing.
+    if npm list -g playwright-chromium 2>/dev/null | grep -q "playwright-chromium"; then
+        info "playwright-chromium (global)"
+    else
+        warn "playwright-chromium is not installed globally — Slidev PNG export will fail"
+        echo ""
+        printf "  Install playwright-chromium now? [y/N] "
+        read -r answer
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            INSTALL_PLAYWRIGHT=true
+        else
+            warn "Skipping. Install later with:"
+            warn "  npm install -g playwright-chromium"
+            warn "  npx playwright install chromium"
+        fi
+    fi
 else
     echo ""
     printf "  Install Slidev support? (only needed for Slidev presentations) [y/N] "
     read -r answer
     if [[ "$answer" =~ ^[Yy]$ ]]; then
         INSTALL_SLIDEV=true
+        INSTALL_PLAYWRIGHT=true
     else
         info "Skipping Slidev (you can install later with: npm install -g @slidev/cli)"
     fi
@@ -97,10 +119,20 @@ if $INSTALL_SLIDEV; then
     echo "Installing Slidev CLI…"
     npm install -g @slidev/cli
     info "@slidev/cli installed"
+fi
 
-    echo "Installing Playwright Chromium (used by Slidev for PNG export)…"
-    npx playwright install chromium
+if $INSTALL_PLAYWRIGHT; then
+    echo ""
+    # Two steps are both required for Slidev PNG export:
+    #   Step 1: the playwright-chromium npm package (Slidev imports it at runtime)
+    #   Step 2: the Chromium browser binary (Playwright downloads separately)
+    echo "Installing playwright-chromium npm package (required by Slidev for PNG export)…"
+    npm install -g playwright-chromium
     info "playwright-chromium installed"
+
+    echo "Downloading Chromium browser binary (used by Playwright)…"
+    npx playwright install chromium
+    info "Chromium browser installed"
 fi
 
 # ── Activate ─────────────────────────────────────────────────────────────────

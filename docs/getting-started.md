@@ -29,10 +29,20 @@ sudo apt install python3.11 python3.11-venv nodejs npm ffmpeg
 
 ### Slidev support (optional)
 
+Slidev PNG export requires two separate Playwright components — both must be installed:
+
 ```bash
+# 1. Slidev CLI
 npm install -g @slidev/cli
+
+# 2. playwright-chromium npm package (Slidev imports this at runtime)
+npm install -g playwright-chromium
+
+# 3. Chromium browser binary (downloaded separately by Playwright)
 npx playwright install chromium
 ```
+
+`setup.sh` handles all three steps automatically when you answer yes to Slidev support.
 
 ## Running setup.sh
 
@@ -57,7 +67,7 @@ What the script does:
 2. Asks if you want Slidev support (skipped if `slidev` is already installed).
 3. Creates `.venv/` if it doesn't exist (or recreates it if the existing one is broken).
 4. Installs/upgrades pip and all packages from `requirements.txt`.
-5. If you said yes to Slidev: installs `@slidev/cli` globally and Playwright Chromium.
+5. If you said yes to Slidev: installs `@slidev/cli`, the `playwright-chromium` npm package, and the Chromium browser binary.
 6. Activates the virtual environment.
 
 After setup completes, you can run deck2video directly:
