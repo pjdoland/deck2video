@@ -16,6 +16,41 @@ _SLIDE_FRONTMATTER_RE = re.compile(
     r"\A(\s*\w[\w-]*\s*:.*\n)*", re.MULTILINE
 )
 
+# Placeholder used to hide --- inside code fences during splitting.
+_FENCE_PLACEHOLDER = "\x00DECK2VIDEO_SEP\x00"
+
+
+def _mask_fenced_separators(raw: str) -> str:
+    """Replace ``---`` lines inside fenced code blocks with a placeholder.
+
+    This prevents code examples that contain YAML frontmatter (which starts
+    and ends with ``---``) from being mis-counted as slide separators.
+    """
+    lines = raw.split("\n")
+    result: list[str] = []
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+
+    for line in lines:
+        if not in_fence:
+            m = re.match(r"^(`{3,}|~{3,})", line)
+            if m:
+                in_fence = True
+                fence_char = m.group(1)[0]
+                fence_len = len(m.group(1))
+            result.append(line)
+        else:
+            # A closing fence: same character, at least as many chars, nothing after
+            m = re.match(r"^(" + re.escape(fence_char) + r"+)\s*$", line)
+            if m and len(m.group(1)) >= fence_len:
+                in_fence = False
+                result.append(line)
+            else:
+                result.append(_FENCE_PLACEHOLDER if re.match(r"^---\s*$", line) else line)
+
+    return "\n".join(result)
+
 
 def parse_slidev(path: str) -> list[Slide]:
     """Parse a Slidev markdown file into a list of Slide objects.
@@ -28,6 +63,9 @@ def parse_slidev(path: str) -> list[Slide]:
     with open(path, encoding="utf-8") as f:
         raw = f.read()
 
+    # Mask --- inside fenced code blocks so they aren't treated as slide separators.
+    masked = _mask_fenced_separators(raw)
+
     # Split on Slidev slide separators.  A separator is either a bare "---" line
     # or a "---" followed by per-slide YAML frontmatter and a closing "---":
     #   \n---\n
@@ -35,8 +73,11 @@ def parse_slidev(path: str) -> list[Slide]:
     # Both forms count as ONE slide boundary so frontmatter slides aren't
     # counted as extra slides.
     parts = re.split(
-        r"\n---\s*\n(?:(?:[ \t]*[\w][\w-]*[ \t]*:.*\n)+---\s*\n)?", raw
+        r"\n---\s*\n(?:(?:[ \t]*[\w][\w-]*[ \t]*:.*\n)+---\s*\n)?", masked
     )
+
+    # Restore any masked separators in the resulting parts.
+    parts = [p.replace(_FENCE_PLACEHOLDER, "---") for p in parts]
 
     # The first part is the YAML front-matter block — skip it.
     if len(parts) < 2:

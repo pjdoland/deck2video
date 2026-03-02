@@ -105,6 +105,37 @@ class TestPerSlideFrontmatter:
         assert "# Centered Slide" in slides[0].body
 
 
+class TestCodeFenceSeparators:
+    def test_dash_inside_code_fence_not_a_separator(self, tmp_path):
+        """--- inside a fenced code block must not be treated as a slide separator."""
+        md = tmp_path / "deck.md"
+        md.write_text(
+            "---\ntitle: Test\n---\n\n"
+            "# Slide 1\n\n"
+            "```yaml\n---\ntheme: my-theme\n---\n```\n\n"
+            "---\n\n"
+            "# Slide 2\n"
+        )
+        slides = parse_slidev(str(md))
+        assert len(slides) == 2
+        assert "```yaml" in slides[0].body
+        assert "---" in slides[0].body  # restored in body
+        assert "# Slide 2" in slides[1].body
+
+    def test_dash_inside_tilde_fence_not_a_separator(self, tmp_path):
+        """--- inside a ~~~ fenced block must not be treated as a slide separator."""
+        md = tmp_path / "deck.md"
+        md.write_text(
+            "---\ntitle: Test\n---\n\n"
+            "# Slide 1\n\n"
+            "~~~yaml\n---\nkey: value\n---\n~~~\n\n"
+            "---\n\n"
+            "# Slide 2\n"
+        )
+        slides = parse_slidev(str(md))
+        assert len(slides) == 2
+
+
 class TestNoMarpDirectiveFiltering:
     def test_marp_style_comments_kept_as_notes(self, tmp_path):
         """Slidev parser should NOT filter Marp-style directives as the Marp parser does."""
