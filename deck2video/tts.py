@@ -30,19 +30,24 @@ def load_pronunciations(path: Path) -> dict[str, str]:
     return mapping
 
 
-def apply_pronunciations(text: str, mapping: dict[str, str]) -> str:
-    """Replace words in *text* using the pronunciation mapping.
+def compile_pronunciations(mapping: dict[str, str]) -> list[tuple[re.Pattern, str]]:
+    """Pre-compile pronunciation patterns sorted by descending key length."""
+    return [
+        (re.compile(re.escape(word), re.IGNORECASE), mapping[word])
+        for word in sorted(mapping, key=len, reverse=True)
+    ]
 
-    Matching is case-insensitive and restricted to whole words so that,
-    e.g., replacing "SQL" won't mangle "MySQL".  Longer keys are matched
-    first so that multi-word phrases take priority.
+
+def apply_pronunciations(text: str, patterns: list[tuple[re.Pattern, str]]) -> str:
+    """Replace words in *text* using pre-compiled pronunciation patterns.
+
+    Matching is case-insensitive.  Longer keys are matched first so that
+    multi-word phrases take priority.
     """
-    if not mapping:
+    if not patterns:
         return text
-    # Sort by descending length so longer phrases match first.
-    for word in sorted(mapping, key=len, reverse=True):
-        pattern = re.compile(re.escape(word), re.IGNORECASE)
-        text = pattern.sub(mapping[word], text)
+    for pattern, replacement in patterns:
+        text = pattern.sub(replacement, text)
     return text
 
 
@@ -127,10 +132,19 @@ def _load_model(device: str = "auto", language: str | None = None):
     return model
 
 
-def _move_model_to_cpu(model):
-    """Move all TTS model components to CPU and free GPU memory."""
+def _flush_gpu_cache() -> None:
+    """Force Python GC then flush GPU allocator caches."""
     import torch
 
+    gc.collect()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _move_model_to_cpu(model):
+    """Move all TTS model components to CPU and free GPU memory."""
     # Access known attributes defensively so this works for both
     # ChatterboxTTS and ChatterboxMultilingualTTS.
     for attr in ("t3", "s3gen", "ve"):
@@ -142,11 +156,7 @@ def _move_model_to_cpu(model):
         conds.to("cpu")
     model.device = "cpu"
 
-    gc.collect()
-    if torch.backends.mps.is_available():
-        torch.mps.empty_cache()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    _flush_gpu_cache()
     logger.warning("GPU OOM — moved model to CPU")
     print("  Moved model to CPU due to GPU memory pressure")
 
@@ -216,7 +226,7 @@ def generate_audio_for_slides(
     cfg_weight: float = 0.5,
     temperature: float = 0.8,
     hold_duration: float,
-    pronunciations: dict[str, str] | None = None,
+    pronunciations: list[tuple[re.Pattern, str]] | None = None,
     interactive: bool = False,
     language: str | None = None,
 ) -> list[Path]:
@@ -240,11 +250,7 @@ def generate_audio_for_slides(
     def _flush_gpu():
         """Force Python GC then flush the GPU allocator."""
         if is_gpu:
-            gc.collect()
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _flush_gpu_cache()
 
     def _is_oom(exc: Exception) -> bool:
         """Check whether an exception is an out-of-memory error."""

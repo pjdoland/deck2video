@@ -12,6 +12,7 @@ from deck2video.tts import (
     _play_audio,
     _split_sentences,
     apply_pronunciations,
+    compile_pronunciations,
     load_pronunciations,
 )
 
@@ -52,32 +53,36 @@ class TestLoadPronunciations:
 
 class TestApplyPronunciations:
     def test_simple_replacement(self):
-        result = apply_pronunciations("Use kubectl to deploy.", {"kubectl": "cube control"})
+        patterns = compile_pronunciations({"kubectl": "cube control"})
+        result = apply_pronunciations("Use kubectl to deploy.", patterns)
         assert result == "Use cube control to deploy."
 
     def test_case_insensitive(self):
-        result = apply_pronunciations("Run KUBECTL now.", {"kubectl": "cube control"})
+        patterns = compile_pronunciations({"kubectl": "cube control"})
+        result = apply_pronunciations("Run KUBECTL now.", patterns)
         assert result == "Run cube control now."
 
     def test_longer_phrases_matched_first(self):
-        mapping = {"SQL": "sequel", "PostgreSQL": "post gress sequel"}
-        result = apply_pronunciations("Use PostgreSQL and SQL.", mapping)
+        patterns = compile_pronunciations({"SQL": "sequel", "PostgreSQL": "post gress sequel"})
+        result = apply_pronunciations("Use PostgreSQL and SQL.", patterns)
         assert "post gress sequel" in result
         # "SQL" at end should also be replaced
         assert result == "Use post gress sequel and sequel."
 
     def test_empty_mapping_returns_unchanged(self):
         text = "Nothing changes."
-        assert apply_pronunciations(text, {}) == text
+        assert apply_pronunciations(text, []) == text
 
     def test_no_match_returns_unchanged(self):
         text = "Hello world."
-        assert apply_pronunciations(text, {"kubectl": "cube control"}) == text
+        patterns = compile_pronunciations({"kubectl": "cube control"})
+        assert apply_pronunciations(text, patterns) == text
 
     def test_multiple_occurrences(self):
+        patterns = compile_pronunciations({"nginx": "engine X"})
         result = apply_pronunciations(
             "nginx serves nginx well.",
-            {"nginx": "engine X"},
+            patterns,
         )
         assert result == "engine X serves engine X well."
 
@@ -86,8 +91,8 @@ class TestApplyPronunciations:
         # replaced with "VS Code".  Then the shorter "Code" key matches
         # the "Code" inside "VS Code" and replaces it too.  This is the
         # expected behavior of the current greedy replacement strategy.
-        mapping = {"Visual Studio Code": "VS Code", "Code": "code editor"}
-        result = apply_pronunciations("Open Visual Studio Code now.", mapping)
+        patterns = compile_pronunciations({"Visual Studio Code": "VS Code", "Code": "code editor"})
+        result = apply_pronunciations("Open Visual Studio Code now.", patterns)
         assert "VS code editor" in result
 
 
@@ -284,7 +289,7 @@ class TestGenerateAudioForSlides:
     def test_pronunciation_applied_before_synthesis(self, tmp_path):
         """Verify pronunciations are applied to slide notes."""
         slides = [self._make_slide(1, notes="Use kubectl now.")]
-        pronunciations = {"kubectl": "cube control"}
+        pronunciations = compile_pronunciations({"kubectl": "cube control"})
 
         mock_torch = MagicMock()
         mock_torch.backends.mps.is_available.return_value = False

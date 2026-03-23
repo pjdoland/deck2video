@@ -144,9 +144,11 @@ class TestPipelineOrchestration:
         pron = tmp_path / "pron.json"
         pron.write_text(json.dumps({"kubectl": "cube control"}))
 
-        with patch("deck2video.__main__.load_pronunciations", return_value={"kubectl": "cube control"}) as mock_load:
+        with patch("deck2video.__main__.load_pronunciations", return_value={"kubectl": "cube control"}) as mock_load, \
+             patch("deck2video.__main__.compile_pronunciations", return_value=[]) as mock_compile:
             patches = _patch_pipeline()
             patches["deck2video.__main__.load_pronunciations"] = mock_load
+            patches["deck2video.__main__.compile_pronunciations"] = mock_compile
             mocks = self._run_main(
                 ["deck2video", str(md), "--pronunciations", str(pron)],
                 patches,

@@ -16,7 +16,7 @@ from .marp_parser import parse_marp
 from .marp_renderer import render_slides
 from .slidev_parser import parse_slidev
 from .slidev_renderer import render_slidev_slides
-from .tts import generate_audio_for_slides, load_pronunciations
+from .tts import compile_pronunciations, generate_audio_for_slides, load_pronunciations
 from .utils import check_ffmpeg, get_video_fps
 
 logger = logging.getLogger(__name__)
@@ -78,12 +78,14 @@ def _resolve_videos_and_fps(
 
     Returns (video_paths, fps). Exits on path traversal or missing files.
     """
-    input_dir = input_path.parent
+    input_dir = input_path.parent.resolve()
     video_paths: list[Path | None] = []
     for slide in slides:
         if slide.video:
             vp = (input_dir / slide.video).resolve()
-            if not str(vp).startswith(str(input_dir.resolve()) + "/"):
+            try:
+                vp.relative_to(input_dir)
+            except ValueError:
                 print(f"Error: video path escapes input directory: {slide.video}", file=sys.stderr)
                 sys.exit(1)
             if not vp.exists():
@@ -177,8 +179,9 @@ def main() -> None:
         if not pron_path.exists():
             print(f"Error: pronunciations file {pron_path} not found.", file=sys.stderr)
             sys.exit(1)
-        pronunciations = load_pronunciations(pron_path)
-        print(f"Loaded {len(pronunciations)} pronunciation override(s)")
+        raw_pronunciations = load_pronunciations(pron_path)
+        pronunciations = compile_pronunciations(raw_pronunciations)
+        print(f"Loaded {len(raw_pronunciations)} pronunciation override(s)")
 
     # Pre-flight checks
     check_ffmpeg()

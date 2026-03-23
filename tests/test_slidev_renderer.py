@@ -27,10 +27,12 @@ class TestCheckSlidevCli:
 
 class TestRenderSlidevSlides:
     def _setup_pngs(self, temp_dir, count):
-        """Create fake slide PNG files."""
+        """Create fake slide PNG files in the slides/ subdirectory (Slidev v52+ format)."""
+        slides_dir = temp_dir / "slides"
+        slides_dir.mkdir(exist_ok=True)
         paths = []
         for i in range(1, count + 1):
-            p = temp_dir / f"slides.{i:03d}.png"
+            p = slides_dir / f"{i}.png"
             p.touch()
             paths.append(p)
         return paths
@@ -81,14 +83,16 @@ class TestRenderSlidevSlides:
 
     def test_output_sorted(self, tmp_path):
         # Create PNGs out of order
-        (tmp_path / "slides.003.png").touch()
-        (tmp_path / "slides.001.png").touch()
-        (tmp_path / "slides.002.png").touch()
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        (slides_dir / "3.png").touch()
+        (slides_dir / "1.png").touch()
+        (slides_dir / "2.png").touch()
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
             with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 result = render_slidev_slides("deck.md", tmp_path, expected_count=3)
 
-        assert result[0].name == "slides.001.png"
-        assert result[1].name == "slides.002.png"
-        assert result[2].name == "slides.003.png"
+        assert result[0].name == "1.png"
+        assert result[1].name == "2.png"
+        assert result[2].name == "3.png"

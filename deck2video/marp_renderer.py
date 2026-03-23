@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import logging
 import shutil
 import subprocess
@@ -59,7 +58,7 @@ def render_slides(input_md: str, temp_dir: Path, expected_count: int) -> list[Pa
         raise RuntimeError(f"marp-cli exited with code {result.returncode}")
 
     # marp-cli produces slides.001, slides.002, … (no extension)
-    images = sorted(glob.glob(str(temp_dir / "slides.[0-9][0-9][0-9]")))
+    images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9]"))
     logger.debug("Rendered %d image(s): %s", len(images), images)
 
     if len(images) != expected_count:
@@ -73,4 +72,4 @@ def render_slides(input_md: str, temp_dir: Path, expected_count: int) -> list[Pa
             print(f"    {img}", file=sys.stderr)
         sys.exit(1)
 
-    return [Path(p) for p in images]
+    return list(images)
