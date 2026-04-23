@@ -424,6 +424,60 @@ class TestFormatRouting:
         mocks["deck2video.__main__.parse_slidev"].assert_called_once()
         mocks["deck2video.__main__.render_slidev_slides"].assert_called_once()
 
+    def test_slidev_with_clicks_expands_steps(self, tmp_path):
+        """Slidev slides with [click] markers expand into steps; renderer gets step count."""
+        from deck2video.models import Slide
+
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide\n")
+
+        # Two slides, first has 1 click (→ 2 steps), second has none (→ 1 step) = 3 total
+        slides_with_clicks = [
+            Slide(index=1, body="body", notes="First.\n[click]\nSecond.", video=None),
+            Slide(index=2, body="body", notes="Third.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides_with_clicks),
+            "deck2video.__main__.render_slidev_slides": MagicMock(return_value=[
+                Path("/tmp/1.png"), Path("/tmp/2.png"), Path("/tmp/2-1.png"),
+            ]),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                Path("/tmp/audio_001.wav"), Path("/tmp/audio_002.wav"), Path("/tmp/audio_003.wav"),
+            ]),
+        })
+        mocks = self._run_main(["deck2video", str(md), "--format", "slidev"], patches)
+
+        # Renderer should be called with expected_count=3 and with_clicks=True
+        render_call = mocks["deck2video.__main__.render_slidev_slides"]
+        render_kwargs = render_call.call_args[1]
+        assert render_kwargs["expected_count"] == 3
+        assert render_kwargs["with_clicks"] is True
+
+        # TTS should receive 3 steps
+        gen_call = mocks["deck2video.__main__.generate_audio_for_slides"]
+        steps_arg = gen_call.call_args[0][0]
+        assert len(steps_arg) == 3
+
+    def test_slidev_without_clicks_no_with_clicks_flag(self, tmp_path):
+        """Slidev slides without [click] markers should not pass with_clicks=True."""
+        from deck2video.models import Slide
+
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide\n")
+
+        slides_no_clicks = [
+            Slide(index=1, body="body", notes="Hello.", video=None),
+            Slide(index=2, body="body", notes=None, video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides_no_clicks),
+        })
+        mocks = self._run_main(["deck2video", str(md), "--format", "slidev"], patches)
+
+        render_call = mocks["deck2video.__main__.render_slidev_slides"]
+        render_kwargs = render_call.call_args[1]
+        assert render_kwargs.get("with_clicks") is False
+
 
 # ---------------------------------------------------------------------------
 # Pipeline failure and --keep-temp
@@ -540,6 +594,34 @@ class TestDiscoverTempFiles:
         (tmp_path / "audio_001.wav").touch()
         with pytest.raises(SystemExit):
             _discover_temp_files(tmp_path)
+
+    def test_finds_click_step_images_in_slides_subdir(self, tmp_path):
+        """Click-step images like 2-1.png in slides/ subdir should be discovered."""
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        for name in ["1.png", "2.png", "2-1.png"]:
+            (slides_dir / name).touch()
+        for i in range(1, 4):
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, audio = _discover_temp_files(tmp_path)
+        assert len(images) == 3
+        names = [p.name for p in images]
+        assert names == ["1.png", "2.png", "2-1.png"]
+
+    def test_click_step_images_sorted_correctly(self, tmp_path):
+        """Click steps must interleave between slides, not sort lexicographically."""
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        # Out-of-order creation to test sort
+        for name in ["3.png", "2-2.png", "1.png", "2.png", "2-1.png"]:
+            (slides_dir / name).touch()
+        for i in range(1, 6):
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, _ = _discover_temp_files(tmp_path)
+        names = [p.name for p in images]
+        assert names == ["1.png", "2.png", "2-1.png", "2-2.png", "3.png"]
 
 
 # ---------------------------------------------------------------------------
@@ -836,3 +918,43 @@ class TestRedoSlidesMode:
                                  "--redo-slides", "1", "--temp-dir", str(tmp_path)]):
             with pytest.raises(SystemExit):
                 main()
+
+    def test_redo_slides_slidev_with_clicks_regenerates_all_steps_for_slide(self, tmp_path):
+        """--redo-slides on a Slidev deck regenerates all steps for the specified slide."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide 1\n\n---\n\n# Slide 2\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        # 4 steps total: slide 1 → 2 steps, slide 2 → 2 steps
+        for i in range(1, 5):
+            (temp / f"audio_{i:03d}.wav").touch()
+        slides_subdir = temp / "slides"
+        slides_subdir.mkdir()
+        for name in ["1.png", "1-1.png", "2.png", "2-1.png"]:
+            (slides_subdir / name).touch()
+
+        slides = [
+            Slide(index=1, body="# Slide 1", notes="A.\n[click]\nB.", video=None),
+            Slide(index=2, body="# Slide 2", notes="C.\n[click]\nD.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.detect_format": MagicMock(return_value="slidev"),
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                Path(str(temp / "audio_001.wav")),
+                Path(str(temp / "audio_002.wav")),
+            ]),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--redo-slides", "1",
+             "--temp-dir", str(temp), "--format", "slidev"],
+            patches,
+        )
+
+        gen_call = mocks["deck2video.__main__.generate_audio_for_slides"]
+        gen_call.assert_called_once()
+        steps_arg = gen_call.call_args[0][0]
+        # Should regenerate both steps for slide 1 (slide_index==1)
+        assert len(steps_arg) == 2
+        assert all(s.slide_index == 1 for s in steps_arg)

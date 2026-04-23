@@ -14,8 +14,9 @@ from .assembler import assemble_video
 from .detect import detect_format
 from .marp_parser import parse_marp
 from .marp_renderer import render_slides
+from .models import expand_slides_to_steps
 from .slidev_parser import parse_slidev
-from .slidev_renderer import render_slidev_slides
+from .slidev_renderer import _parse_image_stem, render_slidev_slides
 from .tts import compile_pronunciations, generate_audio_for_slides, load_pronunciations
 from .utils import check_ffmpeg, get_video_fps
 
@@ -28,9 +29,10 @@ def _discover_temp_files(temp_dir: Path) -> tuple[list[Path], list[Path]]:
     Returns (images, audio_files) sorted by index. Raises SystemExit on mismatch.
     """
     # Try Slidev v52+ style first (slides/1.png, slides/2.png, …)
+    # With --with-clicks, click steps appear as slides/2-1.png, slides/2-2.png, etc.
     slides_subdir = temp_dir / "slides"
     if slides_subdir.is_dir():
-        images = sorted(slides_subdir.glob("*.png"), key=lambda p: int(p.stem))
+        images = sorted(slides_subdir.glob("*.png"), key=lambda p: _parse_image_stem(p.stem))
     else:
         # Older Slidev style (slides.001.png) then Marp-style (no extension)
         images = sorted(temp_dir.glob("slides.[0-9][0-9][0-9].png"))
@@ -92,7 +94,8 @@ def _resolve_videos_and_fps(
                 print(f"Error: video file not found: {vp}", file=sys.stderr)
                 sys.exit(1)
             video_paths.append(vp)
-            print(f"  Slide {slide.index}: screencast → {vp.name}")
+            display_idx = slide.slide_index if hasattr(slide, "slide_index") else slide.index
+            print(f"  Slide {display_idx}: screencast → {vp.name}")
         else:
             video_paths.append(None)
 
@@ -217,7 +220,9 @@ def main() -> None:
             if fmt == "auto":
                 fmt = detect_format(str(input_path))
             slides = _parse_slides(input_path, fmt)
-            video_paths, fps = _resolve_videos_and_fps(slides, input_path, args.fps)
+            # Expand Slidev slides to steps so video_paths length matches image count
+            items = expand_slides_to_steps(slides) if fmt == "slidev" else slides
+            video_paths, fps = _resolve_videos_and_fps(items, input_path, args.fps)
             print(f"  Found {len(images)} slides, output framerate: {fps} fps")
 
             print("[reassemble] Assembling video…")
@@ -249,7 +254,13 @@ def main() -> None:
             slides = _parse_slides(input_path, fmt)
             print(f"  Found {len(slides)} slides")
 
-            # Validate requested indices
+            # For Slidev, expand to steps so indices align with temp files
+            if fmt == "slidev":
+                all_steps = expand_slides_to_steps(slides)
+            else:
+                all_steps = slides
+
+            # Validate requested indices against original slide numbers
             max_index = max(s.index for s in slides)
             for idx in slide_indices:
                 if idx > max_index:
@@ -260,12 +271,16 @@ def main() -> None:
             # Discover existing files
             images, audio_files = _discover_temp_files(temp_dir)
 
-            # Regenerate audio for selected slides only
-            redo_slides = [s for s in slides if s.index in slide_indices]
+            # Regenerate audio for selected steps only
+            # For Slidev, filter by slide_index; for Marp, filter by index
+            if fmt == "slidev":
+                redo_steps = [s for s in all_steps if s.slide_index in slide_indices]
+            else:
+                redo_steps = [s for s in all_steps if s.index in slide_indices]
             print(f"[redo] Regenerating audio for slide(s): {','.join(str(i) for i in slide_indices)}")
             t0 = time.monotonic()
             generate_audio_for_slides(
-                redo_slides,
+                redo_steps,
                 temp_dir=temp_dir,
                 voice_path=args.voice,
                 device=args.device,
@@ -281,7 +296,7 @@ def main() -> None:
 
             # Re-discover audio (files were overwritten in place)
             _, audio_files = _discover_temp_files(temp_dir)
-            video_paths, fps = _resolve_videos_and_fps(slides, input_path, args.fps)
+            video_paths, fps = _resolve_videos_and_fps(all_steps, input_path, args.fps)
 
             print("[redo] Assembling video…")
             t0 = time.monotonic()
@@ -295,7 +310,7 @@ def main() -> None:
                 audio_padding_ms=args.audio_padding,
             )
             logger.info("[redo] Assembly completed in %.2fs", time.monotonic() - t0)
-            print(f"\nDone! Redid {len(redo_slides)} slide(s), reassembled {len(images)} total.")
+            print(f"\nDone! Redid {len(redo_steps)} step(s) for slide(s) {','.join(str(i) for i in slide_indices)}, reassembled {len(images)} total.")
             print(f"Output: {output_path}")
 
         # --- Normal full pipeline ---
@@ -311,26 +326,42 @@ def main() -> None:
             t0 = time.monotonic()
             slides = _parse_slides(input_path, fmt)
             logger.info("[1/4] Parse completed in %.2fs — %d slides", time.monotonic() - t0, len(slides))
-            print(f"  Found {len(slides)} slides")
+
+            # For Slidev, expand slides into per-click steps
+            if fmt == "slidev":
+                steps = expand_slides_to_steps(slides)
+                has_clicks = len(steps) > len(slides)
+                if has_clicks:
+                    print(f"  Found {len(slides)} slides → {len(steps)} steps (click expansion)")
+                else:
+                    print(f"  Found {len(slides)} slides")
+            else:
+                steps = slides
+                has_clicks = False
+                print(f"  Found {len(slides)} slides")
 
             # Resolve video paths and auto-detect FPS from screencasts
-            video_paths, fps = _resolve_videos_and_fps(slides, input_path, args.fps)
+            video_paths, fps = _resolve_videos_and_fps(steps, input_path, args.fps)
             print(f"  Output framerate: {fps} fps")
 
             # Step 2: Render images
             print("[2/4] Rendering slide images…")
             t0 = time.monotonic()
             if fmt == "slidev":
-                images = render_slidev_slides(str(input_path), temp_dir, expected_count=len(slides))
+                images = render_slidev_slides(
+                    str(input_path), temp_dir,
+                    expected_count=len(steps),
+                    with_clicks=has_clicks,
+                )
             else:
-                images = render_slides(str(input_path), temp_dir, expected_count=len(slides))
+                images = render_slides(str(input_path), temp_dir, expected_count=len(steps))
             logger.info("[2/4] Render completed in %.2fs", time.monotonic() - t0)
 
             # Step 3: Generate audio
             print("[3/4] Generating audio…")
             t0 = time.monotonic()
             audio_files = generate_audio_for_slides(
-                slides,
+                steps,
                 temp_dir=temp_dir,
                 voice_path=args.voice,
                 device=args.device,
@@ -359,14 +390,18 @@ def main() -> None:
             logger.info("[4/4] Assembly completed in %.2fs", time.monotonic() - t0)
 
             # Summary
-            tts_count = sum(1 for s in slides if s.notes)
-            silent_count = len(slides) - tts_count
+            tts_count = sum(1 for s in steps if s.notes)
+            silent_count = len(steps) - tts_count
             video_count = sum(1 for v in video_paths if v is not None)
             parts = [f"{tts_count} narrated", f"{silent_count} silent"]
             if video_count:
                 parts.append(f"{video_count} with screencast")
-            logger.info("Done: %d slides (%s), output=%s", len(slides), ", ".join(parts), output_path)
-            print(f"\nDone! {len(slides)} slides processed ({', '.join(parts)}).")
+            if fmt == "slidev" and has_clicks:
+                logger.info("Done: %d slides (%d steps, %s), output=%s", len(slides), len(steps), ", ".join(parts), output_path)
+                print(f"\nDone! {len(slides)} slides ({len(steps)} steps) processed ({', '.join(parts)}).")
+            else:
+                logger.info("Done: %d slides (%s), output=%s", len(slides), ", ".join(parts), output_path)
+                print(f"\nDone! {len(slides)} slides processed ({', '.join(parts)}).")
             print(f"Output: {output_path}")
 
     except Exception:

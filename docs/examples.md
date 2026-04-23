@@ -70,6 +70,69 @@ The `transition` key in frontmatter triggers Slidev auto-detection. Per-slide fr
 
 Note: since the video is a sequence of static PNGs, slide transitions from Slidev are not captured in the output.
 
+## Slidev click animations
+
+Use `[click]` markers in your speaker notes to sync narration with progressive reveal animations:
+
+**slides.md:**
+
+```markdown
+---
+transition: fade
+---
+
+# What We'll Cover
+
+<v-clicks>
+
+- Background and motivation
+- The core algorithm
+- Benchmarks and results
+
+</v-clicks>
+
+<!--
+Today I'll walk you through three topics.
+[click]
+First, some background on why this problem matters.
+[click]
+Then the core algorithm — the heart of the approach.
+[click]
+And finally, the benchmarks that show it actually works.
+-->
+
+---
+
+# Summary
+
+<!-- That covers everything. Questions welcome. -->
+```
+
+**Command:**
+
+```bash
+python -m deck2video slides.md --format slidev --voice voice.wav
+```
+
+**What happens:**
+
+deck2video detects the `[click]` markers and expands the first slide into four steps:
+
+```
+[1/4] Parsing slides…
+  Found 2 slides → 5 steps (click expansion)
+```
+
+The Slidev CLI is called with `--with-clicks`, producing `slides/1.png`, `slides/1-1.png`, `slides/1-2.png`, `slides/1-3.png`, and `slides/2.png`. Each gets its own narration segment and they're assembled into a single MP4 where the bullet points appear in sync with the spoken narration.
+
+**Redoing a click slide:**
+
+```bash
+# Regenerates all 4 steps of slide 1 (initial + 3 clicks)
+python -m deck2video slides.md --format slidev \
+    --redo-slides 1 --temp-dir ./build --voice voice.wav
+```
+
 ## Voice cloning with tuned parameters
 
 Record a 10-20 second WAV of yourself speaking naturally, then:

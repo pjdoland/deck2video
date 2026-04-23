@@ -68,6 +68,16 @@ def _play_audio(path: Path) -> None:
     subprocess.run(cmd, capture_output=True)
 
 
+def _label(item) -> str:
+    """Return a human-readable label for a Slide or Step."""
+    if hasattr(item, "slide_index"):
+        # Step object — include click context when past the initial state
+        if item.click > 0:
+            return f"Slide {item.slide_index} click {item.click}"
+        return f"Slide {item.slide_index}"
+    return f"Slide {item.index}"
+
+
 def _split_sentences(text: str) -> list[str]:
     """Split text into sentences, keeping punctuation attached."""
     parts = re.split(r'(?<=[.!?])\s+', text.strip())
@@ -184,7 +194,7 @@ def _generate_slide_audio(
         " ".join(sentences[i:i + 3])
         for i in range(0, len(sentences), 3)
     ]
-    logger.debug("Slide %d: %d sentence(s) in %d chunk(s)", slide.index, len(sentences), len(sentence_groups))
+    logger.debug("%s: %d sentence(s) in %d chunk(s)", _label(slide), len(sentences), len(sentence_groups))
 
     chunks: list = []
     try:
@@ -204,7 +214,7 @@ def _generate_slide_audio(
             del wav
             flush_fn()
             if len(sentence_groups) > 1:
-                print(f"  Slide {slide.index}: chunk {j + 1}/{len(sentence_groups)} OK")
+                print(f"  {_label(slide)}: chunk {j + 1}/{len(sentence_groups)} OK")
 
         combined = torch.cat(chunks, dim=1)
         del chunks
@@ -265,16 +275,16 @@ def generate_audio_for_slides(
         out_path = temp_dir / f"audio_{slide.index:03d}.wav"
 
         if slide.notes is None:
-            logger.debug("Slide %d: no notes, generating %ss silence", slide.index, hold_duration)
+            logger.debug("%s: no notes, generating %ss silence", _label(slide), hold_duration)
             generate_silent_wav(out_path, hold_duration)
-            print(f"  Slide {slide.index}: silent ({hold_duration}s)")
+            print(f"  {_label(slide)}: silent ({hold_duration}s)")
         else:
-            logger.debug("Slide %d: notes text=%r", slide.index, slide.notes)
+            logger.debug("%s: notes text=%r", _label(slide), slide.notes)
             if pronunciations:
                 original = slide.notes
                 slide.notes = apply_pronunciations(slide.notes, pronunciations)
                 if slide.notes != original:
-                    logger.debug("Slide %d: after pronunciations=%r", slide.index, slide.notes)
+                    logger.debug("%s: after pronunciations=%r", _label(slide), slide.notes)
 
             tts_kwargs = dict(
                 voice_path=voice_path,
@@ -291,7 +301,7 @@ def generate_audio_for_slides(
             except Exception as exc:
                 if on_gpu and _is_oom(exc):
                     # Fall back to CPU and retry this slide
-                    logger.warning("Slide %d: GPU OOM, retrying on CPU", slide.index)
+                    logger.warning("%s: GPU OOM, retrying on CPU", _label(slide))
                     _move_model_to_cpu(model)
                     on_gpu = False
                     try:
@@ -299,14 +309,14 @@ def generate_audio_for_slides(
                             model, slide, **tts_kwargs,
                         )
                     except Exception as retry_exc:
-                        msg = f"Slide {slide.index}: TTS failed on CPU ({retry_exc}), substituting silence"
+                        msg = f"{_label(slide)}: TTS failed on CPU ({retry_exc}), substituting silence"
                         logger.error(msg, exc_info=True)
                         print(f"  {msg}", file=sys.stderr)
                         generate_silent_wav(out_path, hold_duration)
                         audio_paths.append(out_path)
                         continue
                 else:
-                    msg = f"Slide {slide.index}: TTS failed ({exc}), substituting silence"
+                    msg = f"{_label(slide)}: TTS failed ({exc}), substituting silence"
                     logger.error(msg, exc_info=True)
                     print(f"  {msg}", file=sys.stderr)
                     generate_silent_wav(out_path, hold_duration)
@@ -316,14 +326,14 @@ def generate_audio_for_slides(
             torchaudio.save(str(out_path), combined, sr)
             del combined
             _flush_gpu()
-            print(f"  Slide {slide.index}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
+            print(f"  {_label(slide)}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
 
             if interactive:
                 _play_audio(out_path)
                 while True:
-                    choice = input("  (y) keep  (n) regenerate  (r) replay  (q) quit: ").strip().lower()
+                    choice = input(f"  {_label(slide)}: (y) keep  (n) regenerate  (r) replay  (q) quit: ").strip().lower()
                     if choice in ("", "y"):
-                        logger.debug("Slide %d: interactive — kept", slide.index)
+                        logger.debug("%s: interactive — kept", _label(slide))
                         break
                     if choice == "r":
                         _play_audio(out_path)
@@ -333,8 +343,8 @@ def generate_audio_for_slides(
                         print("  Quitting pipeline.")
                         sys.exit(0)
                     # choice == "n" or anything else: regenerate
-                    logger.debug("Slide %d: interactive — regenerating", slide.index)
-                    print(f"  Regenerating slide {slide.index}…")
+                    logger.debug("%s: interactive — regenerating", _label(slide))
+                    print(f"  Regenerating {_label(slide)}…")
                     try:
                         combined, sr, n_sent, n_chunks = _generate_slide_audio(
                             model, slide, **tts_kwargs,
@@ -345,7 +355,7 @@ def generate_audio_for_slides(
                     torchaudio.save(str(out_path), combined, sr)
                     del combined
                     _flush_gpu()
-                    print(f"  Slide {slide.index}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
+                    print(f"  {_label(slide)}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
                     _play_audio(out_path)
 
         audio_paths.append(out_path)

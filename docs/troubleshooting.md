@@ -61,17 +61,27 @@ On Windows, download from [ffmpeg.org](https://ffmpeg.org/download.html) and add
 Error: parsed 5 slides but marp-cli produced 3 images.
 ```
 
-This means the parser found a different number of slides than the renderer produced. Common causes:
+or, for Slidev with click animations:
 
-1. **Slidev per-slide frontmatter.** In Slidev, a slide with layout options uses a two-`---` block: `---\nlayout: section\n---`. The parser treats this as one separator. If you see a count mismatch where the parser finds more slides than Slidev exports, check for per-slide frontmatter blocks that aren't being collapsed correctly.
+```
+Error: expected 8 step(s) but slidev export produced 6 image(s).
+  Hint: verify that the number of [click] markers in your speaker notes
+  matches the v-click directives in each slide.
+```
 
-2. **Extra `---` delimiters.** A `---` inside a code block or at an unexpected position can create phantom slides during parsing. Check your markdown for stray horizontal rules.
+This means the parser (or step expansion) found a different number of steps than the renderer produced. Common causes:
 
-3. **Frontmatter issues.** If the frontmatter block isn't properly closed with `---`, the parser may miscount.
+1. **Click count mismatch (Slidev only).** The number of `[click]` markers in your speaker notes doesn't match the number of `v-click` / `<v-clicks>` steps in the slide body. Count the click steps in each slide and ensure the notes have the same number of `[click]` markers. See [Writing slides: click animations](writing-slides.md#slidev-click-animations).
 
-4. **Renderer behavior differences.** Marp-cli and Slidev may handle edge cases (empty slides, trailing delimiters) differently from the parser.
+2. **Slidev per-slide frontmatter.** In Slidev, a slide with layout options uses a two-`---` block: `---\nlayout: section\n---`. The parser treats this as one separator. If you see a count mismatch where the parser finds more slides than Slidev exports, check for per-slide frontmatter blocks that aren't being collapsed correctly.
 
-**Fix:** Inspect your markdown for stray `---` lines. Use `--keep-temp` to see the rendered images and compare with your expected slide count.
+3. **Extra `---` delimiters.** A `---` inside a code block or at an unexpected position can create phantom slides during parsing. Check your markdown for stray horizontal rules.
+
+4. **Frontmatter issues.** If the frontmatter block isn't properly closed with `---`, the parser may miscount.
+
+5. **Renderer behavior differences.** Marp-cli and Slidev may handle edge cases (empty slides, trailing delimiters) differently from the parser.
+
+**Fix:** Inspect your markdown for stray `---` lines. Use `--keep-temp` to see the rendered images and compare with your expected slide/step count.
 
 ## TTS quality issues
 
@@ -140,18 +150,20 @@ Error encountered. Temp files preserved at: /tmp/deck2video_abc123
 | `deck2video.log` | Detailed debug log of the entire pipeline run |
 | `slides.001` | Rendered PNG for slide 1 (Marp, no extension) |
 | `slides/1.png` | Rendered PNG for slide 1 (Slidev — exported to a subdirectory) |
-| `audio_001.wav` | TTS audio for slide 1 |
-| `audio_002.wav` | TTS audio for slide 2 (or silence) |
-| `segment_001.ts` | Encoded MPEG-TS video segment for slide 1 |
-| `segment_002.ts` | Encoded MPEG-TS video segment for slide 2 |
+| `slides/2-1.png` | Rendered PNG for slide 2, after click 1 (Slidev with `[click]` markers) |
+| `audio_001.wav` | TTS audio for step 1 |
+| `audio_002.wav` | TTS audio for step 2 (or silence) |
+| `segment_001.ts` | Encoded MPEG-TS video segment for step 1 |
+| `segment_002.ts` | Encoded MPEG-TS video segment for step 2 |
 | `concat.txt` | ffmpeg concat demuxer input listing all segments |
 
 ### File naming conventions
 
 - All indices are zero-padded to 3 digits: `001`, `002`, ..., `999`.
-- Slide numbering starts at 1 (matching the slide index in output messages).
+- Step numbering starts at 1 (matching the step index in output messages). For decks without click animations, step = slide.
 - Audio files: `audio_{index}.wav`
 - Image files: `slides.{index}` (Marp) or `slides/{index}.png` (Slidev — in a subdirectory, not zero-padded)
+- Slidev click step images: `slides/{slide}-{click}.png` (e.g. `slides/3-2.png` = slide 3, after click 2)
 - Segments: `segment_{index}.ts`
 
 ### Inspecting the log file
