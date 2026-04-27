@@ -109,6 +109,20 @@ def _resolve_videos_and_fps(
     return video_paths, fps
 
 
+def _build_padding_list(steps: list, audio_padding_ms: int, with_clicks_padding_ms: int) -> list[int]:
+    """Return a per-step padding list.
+
+    Steps that start a new slide (click == 0) use ``audio_padding_ms``.
+    Steps that are within a slide (click > 0) use ``with_clicks_padding_ms``.
+    Plain ``Slide`` objects (Marp, no click attribute) always use ``audio_padding_ms``.
+    """
+    result = []
+    for step in steps:
+        click = getattr(step, "click", 0)
+        result.append(audio_padding_ms if click == 0 else with_clicks_padding_ms)
+    return result
+
+
 def _parse_slides(input_path: Path, fmt: str) -> list:
     """Parse slides using the appropriate parser for the detected format."""
     if fmt == "slidev":
@@ -145,6 +159,9 @@ def main() -> None:
                         help="Path to a JSON file mapping words to phonetic respellings")
     parser.add_argument("--audio-padding", type=int, default=0,
                         help="Milliseconds of silence before and after each slide's audio (default: 0)")
+    parser.add_argument("--with-clicks-audio-padding", type=int, default=0,
+                        help="Milliseconds of silence before and after each click-step's audio "
+                             "(default: 0; only applies when Slidev click animation steps are present)")
     parser.add_argument("--keep-temp", action="store_true",
                         help="Don't delete intermediate files after rendering")
     parser.add_argument("--format", choices=["auto", "marp", "slidev"], default="auto",
@@ -234,7 +251,9 @@ def main() -> None:
                 temp_dir=temp_dir,
                 fps=fps,
                 videos=video_paths,
-                audio_padding_ms=args.audio_padding,
+                audio_padding_ms=_build_padding_list(
+                    items, args.audio_padding, args.with_clicks_audio_padding
+                ),
             )
             logger.info("[reassemble] Assembly completed in %.2fs", time.monotonic() - t0)
             print(f"\nDone! Reassembled {len(images)} slides.")
@@ -307,7 +326,9 @@ def main() -> None:
                 temp_dir=temp_dir,
                 fps=fps,
                 videos=video_paths,
-                audio_padding_ms=args.audio_padding,
+                audio_padding_ms=_build_padding_list(
+                    all_steps, args.audio_padding, args.with_clicks_audio_padding
+                ),
             )
             logger.info("[redo] Assembly completed in %.2fs", time.monotonic() - t0)
             print(f"\nDone! Redid {len(redo_steps)} step(s) for slide(s) {','.join(str(i) for i in slide_indices)}, reassembled {len(images)} total.")
@@ -385,7 +406,9 @@ def main() -> None:
                 temp_dir=temp_dir,
                 fps=fps,
                 videos=video_paths,
-                audio_padding_ms=args.audio_padding,
+                audio_padding_ms=_build_padding_list(
+                    steps, args.audio_padding, args.with_clicks_audio_padding
+                ),
             )
             logger.info("[4/4] Assembly completed in %.2fs", time.monotonic() - t0)
 

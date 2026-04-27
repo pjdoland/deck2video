@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from deck2video.__main__ import _discover_temp_files, _parse_slide_list, _resolve_videos_and_fps
-from deck2video.models import Slide
+from deck2video.__main__ import _build_padding_list, _discover_temp_files, _parse_slide_list, _resolve_videos_and_fps
+from deck2video.models import Slide, Step
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +293,47 @@ class TestFpsAutoDetection:
 # Audio padding
 # ---------------------------------------------------------------------------
 
+class TestBuildPaddingList:
+    """Unit tests for _build_padding_list."""
+
+    def _slide(self, index):
+        return Slide(index=index, body="", notes=None)
+
+    def _step(self, index, slide_index, click):
+        return Step(index=index, slide_index=slide_index, click=click, notes=None)
+
+    def test_all_slides_use_audio_padding(self):
+        slides = [self._slide(1), self._slide(2), self._slide(3)]
+        result = _build_padding_list(slides, audio_padding_ms=500, with_clicks_padding_ms=0)
+        assert result == [500, 500, 500]
+
+    def test_click_steps_use_with_clicks_padding(self):
+        steps = [
+            self._step(1, 1, 0),   # slide boundary
+            self._step(2, 1, 1),   # click step
+            self._step(3, 2, 0),   # slide boundary
+            self._step(4, 2, 1),   # click step
+        ]
+        result = _build_padding_list(steps, audio_padding_ms=500, with_clicks_padding_ms=100)
+        assert result == [500, 100, 500, 100]
+
+    def test_no_clicks_same_as_scalar(self):
+        steps = [self._step(1, 1, 0), self._step(2, 2, 0)]
+        result = _build_padding_list(steps, audio_padding_ms=300, with_clicks_padding_ms=50)
+        assert result == [300, 300]
+
+    def test_with_clicks_padding_zero_by_default_effect(self):
+        steps = [self._step(1, 1, 0), self._step(2, 1, 1), self._step(3, 2, 0)]
+        result = _build_padding_list(steps, audio_padding_ms=400, with_clicks_padding_ms=0)
+        assert result == [400, 0, 400]
+
+    def test_marp_slides_no_click_attribute(self):
+        slides = [self._slide(1), self._slide(2)]
+        result = _build_padding_list(slides, audio_padding_ms=200, with_clicks_padding_ms=999)
+        # Slide objects have no click attribute → always audio_padding_ms
+        assert result == [200, 200]
+
+
 class TestAudioPadding:
     def _run_main(self, argv, patches):
         import contextlib
@@ -312,7 +353,8 @@ class TestAudioPadding:
 
         mocks = self._run_main(["deck2video", str(md)], _patch_pipeline())
         assemble_call = mocks["deck2video.__main__.assemble_video"]
-        assert assemble_call.call_args[1]["audio_padding_ms"] == 0
+        # Marp: 2 slides, both click=0, default padding 0 → [0, 0]
+        assert assemble_call.call_args[1]["audio_padding_ms"] == [0, 0]
 
     def test_padding_passed_to_assembler(self, tmp_path):
         md = tmp_path / "deck.md"
@@ -323,7 +365,38 @@ class TestAudioPadding:
             _patch_pipeline(),
         )
         assemble_call = mocks["deck2video.__main__.assemble_video"]
-        assert assemble_call.call_args[1]["audio_padding_ms"] == 400
+        # Marp: 2 slides → [400, 400]
+        assert assemble_call.call_args[1]["audio_padding_ms"] == [400, 400]
+
+    def test_with_clicks_padding_applies_to_click_steps(self, tmp_path):
+        """Click steps use --with-clicks-audio-padding; slide boundaries use --audio-padding."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide\n")
+
+        slides = [
+            Slide(index=1, body="# Slide 1", notes="A.\n[click]\nB.", video=None),
+            Slide(index=2, body="# Slide 2", notes="C.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.detect_format": MagicMock(return_value="slidev"),
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides),
+            "deck2video.__main__.render_slidev_slides": MagicMock(return_value=[
+                Path("/tmp/1.png"), Path("/tmp/1-1.png"), Path("/tmp/2.png"),
+            ]),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                Path("/tmp/audio_001.wav"),
+                Path("/tmp/audio_002.wav"),
+                Path("/tmp/audio_003.wav"),
+            ]),
+        })
+        mocks = self._run_main(
+            ["deck2video", str(md), "--format", "slidev",
+             "--audio-padding", "500", "--with-clicks-audio-padding", "100"],
+            patches,
+        )
+        assemble_call = mocks["deck2video.__main__.assemble_video"]
+        # steps: slide1/click0=500, slide1/click1=100, slide2/click0=500
+        assert assemble_call.call_args[1]["audio_padding_ms"] == [500, 100, 500]
 
 
 # ---------------------------------------------------------------------------
