@@ -157,6 +157,7 @@ python -m deck2video <input.md> [options]
 | `--audio-padding` | `0` | Milliseconds of silence before and after each slide's audio |
 | `--interactive`, `-i` | off | Review and approve each slide's TTS audio before continuing |
 | `--keep-temp` | off | Preserve intermediate files after rendering |
+| `--dark` | off | Render Slidev slides in dark mode (passes `--dark` to `slidev export`) |
 | `--reassemble` | off | Skip parse/render/TTS; assemble MP4 from existing temp dir files |
 | `--redo-slides` | none | Regenerate TTS for listed slides (e.g. `2,3,7`), then reassemble |
 

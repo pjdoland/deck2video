@@ -35,6 +35,15 @@ Presentation format. Controls which parser and renderer are used.
 - **Details:** When set to `auto`, the format is [detected from the file content](format-detection.md). Set explicitly to skip detection or override a wrong guess.
 - **Example:** `--format slidev`
 
+### `--dark`
+
+Render Slidev slides in dark mode.
+
+- **Type:** flag (no argument)
+- **Default:** off
+- **Details:** Passes `--dark` to `slidev export`, producing images using Slidev's dark theme. Has no effect when rendering Marp presentations.
+- **Example:** `--dark`
+
 ### `--temp-dir`
 
 Directory for intermediate files (rendered PNGs, audio WAVs, video segments, log file).
