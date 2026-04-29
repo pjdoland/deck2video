@@ -42,13 +42,16 @@ def _parse_image_stem(stem: str) -> tuple[int, int]:
 
 
 def render_slidev_slides(
-    input_md: str, temp_dir: Path, expected_count: int, with_clicks: bool = False
+    input_md: str, temp_dir: Path, expected_count: int, with_clicks: bool = False,
+    dark: bool = False,
 ) -> list[Path]:
     """Export a Slidev deck to PNG images.
 
     Returns a sorted list of image paths. When *with_clicks* is True the
     ``--with-clicks`` flag is appended to the export command so that Slidev
     produces one image per click step (e.g. ``2.png``, ``2-1.png``, …).
+    When *dark* is True the ``--dark`` flag is appended so Slidev renders in
+    dark mode.
     """
     check_slidev_cli()
 
@@ -69,6 +72,9 @@ def render_slidev_slides(
 
     if with_clicks:
         cmd.append("--with-clicks")
+
+    if dark:
+        cmd.append("--dark")
 
     logger.debug("slidev command: %s", " ".join(cmd))
     print(f"  Running: {' '.join(cmd)}")

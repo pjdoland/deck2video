@@ -124,6 +124,28 @@ class TestRenderSlidevSlides:
         cmd = mock_run.call_args[0][0]
         assert "--with-clicks" not in cmd
 
+    def test_dark_appends_flag(self, tmp_path):
+        """--dark should add the flag to the slidev export command."""
+        self._setup_pngs(tmp_path, 2)
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+                render_slidev_slides("deck.md", tmp_path, expected_count=2, dark=True)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--dark" in cmd
+
+    def test_without_dark_no_flag(self, tmp_path):
+        """When dark=False (default), --dark should not appear in the command."""
+        self._setup_pngs(tmp_path, 2)
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+                render_slidev_slides("deck.md", tmp_path, expected_count=2)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--dark" not in cmd
+
     def test_click_step_images_sorted_correctly(self, tmp_path):
         """Click-step images like 2-1.png must sort between slide 2 and slide 3."""
         slides_dir = tmp_path / "slides"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import sys
@@ -123,6 +124,91 @@ def _build_padding_list(steps: list, audio_padding_ms: int, with_clicks_padding_
     return result
 
 
+def _write_manifest(steps: list, temp_dir: Path) -> None:
+    """Write steps.json recording the flat Slidev step structure.
+
+    Captures {index, slide_index, click} for every step so that a future
+    --redo-slides run can detect click-count changes and remap audio files.
+    Only called for Slidev format.
+    """
+    entries = [
+        {"index": s.index, "slide_index": s.slide_index, "click": s.click}
+        for s in steps
+    ]
+    manifest_path = temp_dir / "steps.json"
+    with open(manifest_path, "w") as f:
+        json.dump(entries, f, indent=2)
+    logger.debug("Wrote manifest with %d steps to %s", len(entries), manifest_path)
+
+
+def _read_manifest(temp_dir: Path) -> list[dict] | None:
+    """Load steps.json from temp_dir. Returns None if the file doesn't exist."""
+    manifest_path = temp_dir / "steps.json"
+    if not manifest_path.exists():
+        return None
+    with open(manifest_path) as f:
+        return json.load(f)
+
+
+def _build_audio_remap(
+    old_steps: list[dict],
+    new_steps: list,
+    redo_slide_indices: set[int],
+) -> dict[int, int]:
+    """Build a map of old audio step index → new audio step index for unchanged steps.
+
+    Steps belonging to redo'd slides are excluded (their audio will be regenerated).
+    Only steps whose position has actually shifted are included.
+    """
+    old_lookup: dict[tuple[int, int], int] = {
+        (s["slide_index"], s["click"]): s["index"]
+        for s in old_steps
+        if s["slide_index"] not in redo_slide_indices
+    }
+    rename_map: dict[int, int] = {}
+    for new_step in new_steps:
+        if new_step.slide_index not in redo_slide_indices:
+            key = (new_step.slide_index, new_step.click)
+            old_idx = old_lookup.get(key)
+            if old_idx is not None and old_idx != new_step.index:
+                rename_map[old_idx] = new_step.index
+    return rename_map
+
+
+def _apply_audio_renames(
+    rename_map: dict[int, int],
+    old_steps: list[dict],
+    redo_slide_indices: set[int],
+    temp_dir: Path,
+) -> None:
+    """Rename audio files for shifted unchanged steps; delete audio for redo'd steps.
+
+    Uses two-pass staging (rename to .tmp first, then to final names) to avoid
+    collisions when file A must move to position B while B moves to position C.
+    """
+    # Pass 1: Stage files that need renaming to .tmp names
+    for old_idx in rename_map:
+        src = temp_dir / f"audio_{old_idx:03d}.wav"
+        if src.exists():
+            src.rename(temp_dir / f"audio_{old_idx:03d}.wav.tmp")
+            logger.debug("Staged audio_%03d.wav → .tmp", old_idx)
+
+    # Delete audio files belonging to redo'd steps (TTS will create fresh ones)
+    for s in old_steps:
+        if s["slide_index"] in redo_slide_indices:
+            old_file = temp_dir / f"audio_{s['index']:03d}.wav"
+            if old_file.exists():
+                old_file.unlink()
+                logger.debug("Deleted redo'd audio_%03d.wav", s["index"])
+
+    # Pass 2: Move staged files to their final positions
+    for old_idx, new_idx in rename_map.items():
+        tmp = temp_dir / f"audio_{old_idx:03d}.wav.tmp"
+        if tmp.exists():
+            tmp.rename(temp_dir / f"audio_{new_idx:03d}.wav")
+            logger.debug("Moved audio_%03d.wav.tmp → audio_%03d.wav", old_idx, new_idx)
+
+
 def _parse_slides(input_path: Path, fmt: str) -> list:
     """Parse slides using the appropriate parser for the detected format."""
     if fmt == "slidev":
@@ -168,6 +254,9 @@ def main() -> None:
                         help="Presentation format: auto, marp, or slidev (default: auto)")
     parser.add_argument("--interactive", "-i", action="store_true",
                         help="Review and approve each slide's TTS audio before continuing")
+    parser.add_argument("--dark", action="store_true",
+                        help="Render Slidev slides in dark mode (passes --dark to slidev export; "
+                             "ignored for Marp presentations)")
 
     rerun_group = parser.add_mutually_exclusive_group()
     rerun_group.add_argument("--reassemble", action="store_true",
@@ -262,6 +351,7 @@ def main() -> None:
         # --- Redo-slides mode ---
         elif args.redo_slides:
             slide_indices = _parse_slide_list(args.redo_slides)
+            slide_indices_set = set(slide_indices)
 
             # Parse to get speaker notes
             fmt = args.format
@@ -287,15 +377,100 @@ def main() -> None:
                           file=sys.stderr)
                     sys.exit(1)
 
+            # For Slidev: detect click-count changes via manifest
+            if fmt == "slidev":
+                manifest = _read_manifest(temp_dir)
+                click_changed = False
+                if manifest is not None:
+                    old_counts: dict[int, int] = {}
+                    for s in manifest:
+                        si = s["slide_index"]
+                        if si in slide_indices_set:
+                            old_counts[si] = old_counts.get(si, 0) + 1
+                    new_counts: dict[int, int] = {}
+                    for s in all_steps:
+                        if s.slide_index in slide_indices_set:
+                            new_counts[s.slide_index] = new_counts.get(s.slide_index, 0) + 1
+                    click_changed = old_counts != new_counts
+
+                if click_changed:
+                    print(f"[redo] Click structure changed for slide(s) {','.join(str(i) for i in slide_indices)} — remapping audio and re-rendering images…")
+
+                    # Remap unchanged audio files to their new positions; delete redo'd ones
+                    rename_map = _build_audio_remap(manifest, all_steps, slide_indices_set)
+                    _apply_audio_renames(rename_map, manifest, slide_indices_set, temp_dir)
+
+                    # Clean and re-render all slide images (Slidev always exports the full deck)
+                    slides_dir = temp_dir / "slides"
+                    if slides_dir.exists():
+                        shutil.rmtree(slides_dir)
+                    has_clicks = len(all_steps) > len(slides)
+                    print("[redo] Re-rendering slide images…")
+                    t0 = time.monotonic()
+                    images = render_slidev_slides(
+                        str(input_path), temp_dir,
+                        expected_count=len(all_steps),
+                        with_clicks=has_clicks,
+                        dark=args.dark,
+                    )
+                    logger.info("[redo] Re-render completed in %.2fs", time.monotonic() - t0)
+
+                    # Regenerate TTS for all steps of the redo'd slides
+                    redo_steps = [s for s in all_steps if s.slide_index in slide_indices_set]
+                    print(f"[redo] Regenerating audio for slide(s): {','.join(str(i) for i in slide_indices)}")
+                    t0 = time.monotonic()
+                    generate_audio_for_slides(
+                        redo_steps,
+                        temp_dir=temp_dir,
+                        voice_path=args.voice,
+                        device=args.device,
+                        exaggeration=args.exaggeration,
+                        cfg_weight=args.cfg_weight,
+                        temperature=args.temperature,
+                        hold_duration=args.hold_duration,
+                        pronunciations=pronunciations,
+                        interactive=args.interactive,
+                        language=args.language,
+                    )
+                    logger.info("[redo] Audio regeneration completed in %.2fs", time.monotonic() - t0)
+
+                    # All files now in place — discover and assemble
+                    images, audio_files = _discover_temp_files(temp_dir)
+                    video_paths, fps = _resolve_videos_and_fps(all_steps, input_path, args.fps)
+
+                    print("[redo] Assembling video…")
+                    t0 = time.monotonic()
+                    assemble_video(
+                        images,
+                        audio_files,
+                        output_path,
+                        temp_dir=temp_dir,
+                        fps=fps,
+                        videos=video_paths,
+                        audio_padding_ms=_build_padding_list(
+                            all_steps, args.audio_padding, args.with_clicks_audio_padding
+                        ),
+                    )
+                    logger.info("[redo] Assembly completed in %.2fs", time.monotonic() - t0)
+
+                    _write_manifest(all_steps, temp_dir)
+                    print(f"\nDone! Redid {len(redo_steps)} step(s) for slide(s) {','.join(str(i) for i in slide_indices)} (click structure changed), reassembled {len(images)} total.")
+                    print(f"Output: {output_path}")
+                    return
+
+                elif manifest is None:
+                    print("  Note: no steps.json manifest found; cannot detect click-count changes. Re-run the full pipeline if click counts have changed.")
+
+            # --- Original redo path (no click change, or Marp) ---
             # Discover existing files
             images, audio_files = _discover_temp_files(temp_dir)
 
             # Regenerate audio for selected steps only
             # For Slidev, filter by slide_index; for Marp, filter by index
             if fmt == "slidev":
-                redo_steps = [s for s in all_steps if s.slide_index in slide_indices]
+                redo_steps = [s for s in all_steps if s.slide_index in slide_indices_set]
             else:
-                redo_steps = [s for s in all_steps if s.index in slide_indices]
+                redo_steps = [s for s in all_steps if s.index in slide_indices_set]
             print(f"[redo] Regenerating audio for slide(s): {','.join(str(i) for i in slide_indices)}")
             t0 = time.monotonic()
             generate_audio_for_slides(
@@ -331,6 +506,11 @@ def main() -> None:
                 ),
             )
             logger.info("[redo] Assembly completed in %.2fs", time.monotonic() - t0)
+
+            # Update manifest for Slidev (creates it if the original run pre-dated this feature)
+            if fmt == "slidev":
+                _write_manifest(all_steps, temp_dir)
+
             print(f"\nDone! Redid {len(redo_steps)} step(s) for slide(s) {','.join(str(i) for i in slide_indices)}, reassembled {len(images)} total.")
             print(f"Output: {output_path}")
 
@@ -356,6 +536,7 @@ def main() -> None:
                     print(f"  Found {len(slides)} slides → {len(steps)} steps (click expansion)")
                 else:
                     print(f"  Found {len(slides)} slides")
+                _write_manifest(steps, temp_dir)
             else:
                 steps = slides
                 has_clicks = False
@@ -373,6 +554,7 @@ def main() -> None:
                     str(input_path), temp_dir,
                     expected_count=len(steps),
                     with_clicks=has_clicks,
+                    dark=args.dark,
                 )
             else:
                 images = render_slides(str(input_path), temp_dir, expected_count=len(steps))
