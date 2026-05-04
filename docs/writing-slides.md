@@ -177,7 +177,68 @@ This appears on click.
 
 deck2video does not process these components; they're passed through to the Slidev CLI for rendering. The presence of Vue components (`v-click`, `v-clicks`, `v-after`, `v-click-hide`, `Arrow`, `RenderWhen`, `SlidevVideo`) is used as a signal for [auto-detection](format-detection.md).
 
-Note: since deck2video exports static PNGs, click animations in the final video will show the slide in its final state (all elements visible). If you need step-by-step reveals, consider splitting them into separate slides.
+## Slidev click animations
+
+When you use `v-click` or `v-clicks` for progressive reveal, you can sync narration to each animation step by adding `[click]` markers in your speaker notes. deck2video treats each marker as a step boundary: the text before the marker plays while the slide is in its initial state, the text after plays when the first animation fires, and so on.
+
+### Writing click markers
+
+Place `[click]` on its own line inside an HTML comment, at each point in the narration where the next animation should have already triggered:
+
+```markdown
+---
+
+# Key Features
+
+<v-clicks>
+
+- Fast — sub-millisecond latency
+- Reliable — 99.99% uptime SLA
+- Scalable — handles millions of requests
+
+</v-clicks>
+
+<!--
+Let's look at the three key features of our platform.
+[click]
+First, it's fast — with sub-millisecond latency at the 99th percentile.
+[click]
+Second, it's reliable — we maintain a 99.99% uptime SLA.
+[click]
+And third, it scales to handle millions of requests without configuration.
+-->
+```
+
+This produces four video segments for the slide:
+- **Initial state** (no bullets visible): "Let's look at the three key features of our platform."
+- **After click 1** (first bullet visible): "First, it's fast..."
+- **After click 2** (two bullets visible): "Second, it's reliable..."
+- **After click 3** (all bullets visible): "And third, it scales..."
+
+### Rules
+
+- `[click]` must appear on its own line (leading/trailing whitespace is ignored).
+- Matching is case-insensitive (`[CLICK]` and `[Click]` both work).
+- A fragment with only whitespace between two markers produces a silent hold for that step.
+- The number of `[click]` markers in your notes must match the number of `v-click` steps in the slide. If they don't match, Slidev will export a different number of images than expected and the pipeline will exit with an error.
+- `[click]` markers in video-directive slides (`<!-- video: ... -->`) are stripped and the slide is never click-expanded.
+- Marp slides are unaffected — click expansion only applies to Slidev.
+
+### Click count mismatch
+
+If you write three `[click]` markers but a slide has five `v-click` directives, the Slidev CLI exports five images but deck2video expects four. The pipeline exits with:
+
+```
+Error: expected 4 step(s) but slidev export produced 6 image(s).
+  Hint: verify that the number of [click] markers in your speaker notes
+  matches the v-click directives in each slide.
+```
+
+Count the `v-click` / `<v-clicks>` entries in the slide body and ensure you have the same number of `[click]` markers in the notes. Each item in a `<v-clicks>` list counts as one click.
+
+### Slides with v-click but no [click] markers
+
+If a slide has `v-click` directives but you haven't added `[click]` markers to the notes, deck2video treats it as a single step. The Slidev CLI will export multiple images (initial state + one per click) but deck2video will expect only one — causing the same count mismatch error above. Add `[click]` markers to your notes, or remove the `v-click` directives if you don't need step-by-step reveal in the video.
 
 ## Video directive
 

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deck2video.tts import (
+    _label,
     _play_audio,
     _split_sentences,
     apply_pronunciations,
@@ -759,3 +760,107 @@ class TestInteractiveRegenFailure:
         assert len(paths) == 1
         captured = capsys.readouterr()
         assert "Regeneration failed" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# _label helper
+# ---------------------------------------------------------------------------
+
+class TestLabel:
+    def test_slide_returns_slide_label(self):
+        from deck2video.models import Slide
+        slide = Slide(index=3, body="body", notes=None)
+        assert _label(slide) == "Slide 3"
+
+    def test_step_click_zero_returns_slide_label(self):
+        from deck2video.models import Step
+        step = Step(index=1, slide_index=3, click=0, notes=None)
+        assert _label(step) == "Slide 3"
+
+    def test_step_click_nonzero_includes_click(self):
+        from deck2video.models import Step
+        step = Step(index=2, slide_index=3, click=1, notes="Text.")
+        assert _label(step) == "Slide 3 click 1"
+
+    def test_step_higher_click(self):
+        from deck2video.models import Step
+        step = Step(index=5, slide_index=2, click=3, notes="Text.")
+        assert _label(step) == "Slide 2 click 3"
+
+
+# ---------------------------------------------------------------------------
+# generate_audio_for_slides with Step objects
+# ---------------------------------------------------------------------------
+
+class TestGenerateAudioForSteps:
+    """Verify that Step objects work correctly with generate_audio_for_slides."""
+
+    def _make_step(self, index, slide_index, click, notes=None):
+        from deck2video.models import Step
+        return Step(index=index, slide_index=slide_index, click=click, notes=notes)
+
+    def _setup_mocks(self):
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torch.cuda.is_available.return_value = False
+        mock_torchaudio = MagicMock()
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.device = "cpu"
+        mock_model.generate.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.zeros.return_value.cpu.return_value = mock_torch.zeros(1, 24000)
+        mock_torch.cat.return_value = mock_torch.zeros(1, 24000)
+        return mock_torch, mock_torchaudio, mock_model
+
+    def test_step_audio_file_named_by_step_index(self, tmp_path):
+        """Audio files for steps use step.index (sequential), not slide_index."""
+        steps = [
+            self._make_step(1, slide_index=1, click=0, notes=None),
+            self._make_step(2, slide_index=1, click=1, notes=None),
+            self._make_step(3, slide_index=2, click=0, notes=None),
+        ]
+        mock_torch, mock_torchaudio, _ = self._setup_mocks()
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("deck2video.tts._load_model"):
+                from deck2video.tts import generate_audio_for_slides
+                paths = generate_audio_for_slides(steps, temp_dir=tmp_path, voice_path=None, hold_duration=1.0)
+
+        assert len(paths) == 3
+        assert paths[0].name == "audio_001.wav"
+        assert paths[1].name == "audio_002.wav"
+        assert paths[2].name == "audio_003.wav"
+
+    def test_step_label_shown_in_output(self, tmp_path, capsys):
+        """Progress messages should show click context for Steps with click > 0."""
+        steps = [
+            self._make_step(1, slide_index=2, click=0, notes=None),
+            self._make_step(2, slide_index=2, click=1, notes=None),
+        ]
+        mock_torch, mock_torchaudio, _ = self._setup_mocks()
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("deck2video.tts._load_model"):
+                from deck2video.tts import generate_audio_for_slides
+                generate_audio_for_slides(steps, temp_dir=tmp_path, voice_path=None, hold_duration=1.0)
+
+        captured = capsys.readouterr()
+        assert "Slide 2 click 1" in captured.out
+
+    def test_interactive_prompt_includes_label(self, tmp_path):
+        """Interactive prompt should include the step label."""
+        steps = [self._make_step(1, slide_index=3, click=2, notes="Hello.")]
+        mock_torch, mock_torchaudio, mock_model = self._setup_mocks()
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("deck2video.tts._load_model", return_value=mock_model), \
+                 patch("deck2video.tts._play_audio"), \
+                 patch("builtins.input", return_value="y") as mock_input:
+                from deck2video.tts import generate_audio_for_slides
+                generate_audio_for_slides(
+                    steps, temp_dir=tmp_path, voice_path=None,
+                    hold_duration=1.0, interactive=True,
+                )
+
+        prompt = mock_input.call_args[0][0]
+        assert "Slide 3 click 2" in prompt

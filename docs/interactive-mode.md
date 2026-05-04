@@ -14,14 +14,20 @@ python -m deck2video deck.md --voice voice.wav -i
 
 The pipeline runs normally through parsing and rendering. During TTS generation (step 3), after each slide's audio is synthesized, the audio plays automatically, you're prompted with keyboard controls, and the pipeline pauses until you respond.
 
-Slides without speaker notes (silent holds) are skipped.
+Slides without speaker notes (silent holds) are skipped. For Slidev decks with [click animations](writing-slides.md#slidev-click-animations), each click step is reviewed individually.
 
 ## Keyboard controls
 
-After each slide's audio plays, you see:
+After each slide's audio plays, you see a prompt that includes the slide label:
 
 ```
-  (y) keep  (n) regenerate  (r) replay  (q) quit:
+  Slide 3: (y) keep  (n) regenerate  (r) replay  (q) quit:
+```
+
+For Slidev click steps, the label includes click context:
+
+```
+  Slide 3 click 2: (y) keep  (n) regenerate  (r) replay  (q) quit:
 ```
 
 | Key | Action |
@@ -79,18 +85,29 @@ A typical interactive session:
   Using MPS (Apple Silicon) for TTS
   Slide 1: TTS OK (2 sentences in 1 chunk)
   (audio plays automatically)
-  (y) keep  (n) regenerate  (r) replay  (q) quit: y
+  Slide 1: (y) keep  (n) regenerate  (r) replay  (q) quit: y
   Slide 2: TTS OK (1 sentence in 1 chunk)
   (audio plays automatically)
-  (y) keep  (n) regenerate  (r) replay  (q) quit: n
-  Regenerating slide 2...
+  Slide 2: (y) keep  (n) regenerate  (r) replay  (q) quit: n
+  Regenerating Slide 2...
   Slide 2: TTS OK (1 sentence in 1 chunk)
   (new audio plays automatically)
-  (y) keep  (n) regenerate  (r) replay  (q) quit: y
+  Slide 2: (y) keep  (n) regenerate  (r) replay  (q) quit: y
   Slide 3: silent (3.0s)
   Slide 4: TTS OK (3 sentences in 1 chunk)
   (audio plays automatically)
-  (y) keep  (n) regenerate  (r) replay  (q) quit: y
+  Slide 4: (y) keep  (n) regenerate  (r) replay  (q) quit: y
+```
+
+For a Slidev deck with click animations, click steps appear individually:
+
+```
+  Slide 2: TTS OK (1 sentence in 1 chunk)
+  Slide 2: (y) keep  (n) regenerate  (r) replay  (q) quit: y
+  Slide 2 click 1: TTS OK (2 sentences in 1 chunk)
+  Slide 2 click 1: (y) keep  (n) regenerate  (r) replay  (q) quit: y
+  Slide 2 click 2: TTS OK (1 sentence in 1 chunk)
+  Slide 2 click 2: (y) keep  (n) regenerate  (r) replay  (q) quit: y
 ```
 
 ## Tips

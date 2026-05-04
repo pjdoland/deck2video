@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from deck2video.slidev_renderer import check_slidev_cli, render_slidev_slides
+from deck2video.slidev_renderer import _parse_image_stem, check_slidev_cli, render_slidev_slides
 
 
 class TestCheckSlidevCli:
@@ -96,3 +96,107 @@ class TestRenderSlidevSlides:
         assert result[0].name == "1.png"
         assert result[1].name == "2.png"
         assert result[2].name == "3.png"
+
+    def test_with_clicks_appends_flag(self, tmp_path):
+        """--with-clicks should add the flag to the slidev export command."""
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        (slides_dir / "1.png").touch()
+        (slides_dir / "2.png").touch()
+        (slides_dir / "2-1.png").touch()
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+                result = render_slidev_slides("deck.md", tmp_path, expected_count=3, with_clicks=True)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--with-clicks" in cmd
+        assert len(result) == 3
+
+    def test_without_clicks_no_flag(self, tmp_path):
+        """When with_clicks=False (default), --with-clicks should not appear."""
+        self._setup_pngs(tmp_path, 2)
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+                render_slidev_slides("deck.md", tmp_path, expected_count=2)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--with-clicks" not in cmd
+
+    def test_dark_appends_flag(self, tmp_path):
+        """--dark should add the flag to the slidev export command."""
+        self._setup_pngs(tmp_path, 2)
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+                render_slidev_slides("deck.md", tmp_path, expected_count=2, dark=True)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--dark" in cmd
+
+    def test_without_dark_no_flag(self, tmp_path):
+        """When dark=False (default), --dark should not appear in the command."""
+        self._setup_pngs(tmp_path, 2)
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+                render_slidev_slides("deck.md", tmp_path, expected_count=2)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--dark" not in cmd
+
+    def test_click_step_images_sorted_correctly(self, tmp_path):
+        """Click-step images like 2-1.png must sort between slide 2 and slide 3."""
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        # Create out of filesystem order to verify sorting
+        for name in ["3.png", "1.png", "2-2.png", "2.png", "2-1.png"]:
+            (slides_dir / name).touch()
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+                result = render_slidev_slides("deck.md", tmp_path, expected_count=5, with_clicks=True)
+
+        names = [p.name for p in result]
+        assert names == ["1.png", "2.png", "2-1.png", "2-2.png", "3.png"]
+
+    def test_count_mismatch_with_clicks_prints_hint(self, tmp_path, capsys):
+        """Count mismatch when with_clicks=True should print a diagnostic hint."""
+        # Create 2 images but expect 4 (simulating click count mismatch)
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        (slides_dir / "1.png").touch()
+        (slides_dir / "2.png").touch()
+
+        with patch("shutil.which", return_value="/usr/bin/slidev"):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+                with pytest.raises(SystemExit):
+                    render_slidev_slides("deck.md", tmp_path, expected_count=4, with_clicks=True)
+
+        captured = capsys.readouterr()
+        assert "click" in captured.err.lower() or "[click]" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# _parse_image_stem
+# ---------------------------------------------------------------------------
+
+class TestParseImageStem:
+    def test_plain_number(self):
+        assert _parse_image_stem("3") == (3, 0)
+
+    def test_click_step(self):
+        assert _parse_image_stem("3-1") == (3, 1)
+
+    def test_first_slide(self):
+        assert _parse_image_stem("1") == (1, 0)
+
+    def test_high_click_number(self):
+        assert _parse_image_stem("5-10") == (5, 10)
+
+    def test_sort_order(self):
+        """Sorting by _parse_image_stem should interleave click steps correctly."""
+        stems = ["3", "2-1", "1", "2", "2-2"]
+        sorted_stems = sorted(stems, key=_parse_image_stem)
+        assert sorted_stems == ["1", "2", "2-1", "2-2", "3"]

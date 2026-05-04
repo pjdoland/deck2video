@@ -137,20 +137,29 @@ def assemble_video(
     temp_dir: Path,
     fps: int,
     videos: list[Path | None] | None = None,
-    audio_padding_ms: int = 0,
+    audio_padding_ms: int | list[int] = 0,
 ) -> None:
-    """Build per-slide segments and concatenate into the final MP4."""
+    """Build per-slide segments and concatenate into the final MP4.
+
+    ``audio_padding_ms`` can be a scalar (applied to every segment) or a list
+    of per-segment values (must match the number of images).
+    """
     if videos is None:
         videos = [None] * len(images)
 
+    if isinstance(audio_padding_ms, list):
+        padding_per_step = audio_padding_ms
+    else:
+        padding_per_step = [audio_padding_ms] * len(images)
+
     segments: list[Path] = []
-    for i, (img, aud, vid) in enumerate(zip(images, audio_files, videos), start=1):
+    for i, (img, aud, vid, pad) in enumerate(zip(images, audio_files, videos, padding_per_step), start=1):
         if vid is not None:
             print(f"  Encoding video segment {i}/{len(images)} ({vid.name})…")
-            seg = _make_video_segment(i, vid, aud, temp_dir, fps, audio_padding_ms)
+            seg = _make_video_segment(i, vid, aud, temp_dir, fps, pad)
         else:
             print(f"  Encoding segment {i}/{len(images)}…")
-            seg = _make_segment(i, img, aud, temp_dir, fps, audio_padding_ms)
+            seg = _make_segment(i, img, aud, temp_dir, fps, pad)
         segments.append(seg)
 
     # Write concat list

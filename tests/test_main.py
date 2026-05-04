@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from deck2video.__main__ import _discover_temp_files, _parse_slide_list, _resolve_videos_and_fps
-from deck2video.models import Slide
+from deck2video.__main__ import _build_padding_list, _discover_temp_files, _parse_slide_list, _resolve_videos_and_fps
+from deck2video.models import Slide, Step
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +293,47 @@ class TestFpsAutoDetection:
 # Audio padding
 # ---------------------------------------------------------------------------
 
+class TestBuildPaddingList:
+    """Unit tests for _build_padding_list."""
+
+    def _slide(self, index):
+        return Slide(index=index, body="", notes=None)
+
+    def _step(self, index, slide_index, click):
+        return Step(index=index, slide_index=slide_index, click=click, notes=None)
+
+    def test_all_slides_use_audio_padding(self):
+        slides = [self._slide(1), self._slide(2), self._slide(3)]
+        result = _build_padding_list(slides, audio_padding_ms=500, with_clicks_padding_ms=0)
+        assert result == [500, 500, 500]
+
+    def test_click_steps_use_with_clicks_padding(self):
+        steps = [
+            self._step(1, 1, 0),   # slide boundary
+            self._step(2, 1, 1),   # click step
+            self._step(3, 2, 0),   # slide boundary
+            self._step(4, 2, 1),   # click step
+        ]
+        result = _build_padding_list(steps, audio_padding_ms=500, with_clicks_padding_ms=100)
+        assert result == [500, 100, 500, 100]
+
+    def test_no_clicks_same_as_scalar(self):
+        steps = [self._step(1, 1, 0), self._step(2, 2, 0)]
+        result = _build_padding_list(steps, audio_padding_ms=300, with_clicks_padding_ms=50)
+        assert result == [300, 300]
+
+    def test_with_clicks_padding_zero_by_default_effect(self):
+        steps = [self._step(1, 1, 0), self._step(2, 1, 1), self._step(3, 2, 0)]
+        result = _build_padding_list(steps, audio_padding_ms=400, with_clicks_padding_ms=0)
+        assert result == [400, 0, 400]
+
+    def test_marp_slides_no_click_attribute(self):
+        slides = [self._slide(1), self._slide(2)]
+        result = _build_padding_list(slides, audio_padding_ms=200, with_clicks_padding_ms=999)
+        # Slide objects have no click attribute → always audio_padding_ms
+        assert result == [200, 200]
+
+
 class TestAudioPadding:
     def _run_main(self, argv, patches):
         import contextlib
@@ -312,7 +353,8 @@ class TestAudioPadding:
 
         mocks = self._run_main(["deck2video", str(md)], _patch_pipeline())
         assemble_call = mocks["deck2video.__main__.assemble_video"]
-        assert assemble_call.call_args[1]["audio_padding_ms"] == 0
+        # Marp: 2 slides, both click=0, default padding 0 → [0, 0]
+        assert assemble_call.call_args[1]["audio_padding_ms"] == [0, 0]
 
     def test_padding_passed_to_assembler(self, tmp_path):
         md = tmp_path / "deck.md"
@@ -323,7 +365,38 @@ class TestAudioPadding:
             _patch_pipeline(),
         )
         assemble_call = mocks["deck2video.__main__.assemble_video"]
-        assert assemble_call.call_args[1]["audio_padding_ms"] == 400
+        # Marp: 2 slides → [400, 400]
+        assert assemble_call.call_args[1]["audio_padding_ms"] == [400, 400]
+
+    def test_with_clicks_padding_applies_to_click_steps(self, tmp_path):
+        """Click steps use --with-clicks-audio-padding; slide boundaries use --audio-padding."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide\n")
+
+        slides = [
+            Slide(index=1, body="# Slide 1", notes="A.\n[click]\nB.", video=None),
+            Slide(index=2, body="# Slide 2", notes="C.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.detect_format": MagicMock(return_value="slidev"),
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides),
+            "deck2video.__main__.render_slidev_slides": MagicMock(return_value=[
+                Path("/tmp/1.png"), Path("/tmp/1-1.png"), Path("/tmp/2.png"),
+            ]),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                Path("/tmp/audio_001.wav"),
+                Path("/tmp/audio_002.wav"),
+                Path("/tmp/audio_003.wav"),
+            ]),
+        })
+        mocks = self._run_main(
+            ["deck2video", str(md), "--format", "slidev",
+             "--audio-padding", "500", "--with-clicks-audio-padding", "100"],
+            patches,
+        )
+        assemble_call = mocks["deck2video.__main__.assemble_video"]
+        # steps: slide1/click0=500, slide1/click1=100, slide2/click0=500
+        assert assemble_call.call_args[1]["audio_padding_ms"] == [500, 100, 500]
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +496,60 @@ class TestFormatRouting:
         mocks = self._run_main(["deck2video", str(md)], patches)
         mocks["deck2video.__main__.parse_slidev"].assert_called_once()
         mocks["deck2video.__main__.render_slidev_slides"].assert_called_once()
+
+    def test_slidev_with_clicks_expands_steps(self, tmp_path):
+        """Slidev slides with [click] markers expand into steps; renderer gets step count."""
+        from deck2video.models import Slide
+
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide\n")
+
+        # Two slides, first has 1 click (→ 2 steps), second has none (→ 1 step) = 3 total
+        slides_with_clicks = [
+            Slide(index=1, body="body", notes="First.\n[click]\nSecond.", video=None),
+            Slide(index=2, body="body", notes="Third.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides_with_clicks),
+            "deck2video.__main__.render_slidev_slides": MagicMock(return_value=[
+                Path("/tmp/1.png"), Path("/tmp/2.png"), Path("/tmp/2-1.png"),
+            ]),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                Path("/tmp/audio_001.wav"), Path("/tmp/audio_002.wav"), Path("/tmp/audio_003.wav"),
+            ]),
+        })
+        mocks = self._run_main(["deck2video", str(md), "--format", "slidev"], patches)
+
+        # Renderer should be called with expected_count=3 and with_clicks=True
+        render_call = mocks["deck2video.__main__.render_slidev_slides"]
+        render_kwargs = render_call.call_args[1]
+        assert render_kwargs["expected_count"] == 3
+        assert render_kwargs["with_clicks"] is True
+
+        # TTS should receive 3 steps
+        gen_call = mocks["deck2video.__main__.generate_audio_for_slides"]
+        steps_arg = gen_call.call_args[0][0]
+        assert len(steps_arg) == 3
+
+    def test_slidev_without_clicks_no_with_clicks_flag(self, tmp_path):
+        """Slidev slides without [click] markers should not pass with_clicks=True."""
+        from deck2video.models import Slide
+
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide\n")
+
+        slides_no_clicks = [
+            Slide(index=1, body="body", notes="Hello.", video=None),
+            Slide(index=2, body="body", notes=None, video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides_no_clicks),
+        })
+        mocks = self._run_main(["deck2video", str(md), "--format", "slidev"], patches)
+
+        render_call = mocks["deck2video.__main__.render_slidev_slides"]
+        render_kwargs = render_call.call_args[1]
+        assert render_kwargs.get("with_clicks") is False
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +667,34 @@ class TestDiscoverTempFiles:
         (tmp_path / "audio_001.wav").touch()
         with pytest.raises(SystemExit):
             _discover_temp_files(tmp_path)
+
+    def test_finds_click_step_images_in_slides_subdir(self, tmp_path):
+        """Click-step images like 2-1.png in slides/ subdir should be discovered."""
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        for name in ["1.png", "2.png", "2-1.png"]:
+            (slides_dir / name).touch()
+        for i in range(1, 4):
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, audio = _discover_temp_files(tmp_path)
+        assert len(images) == 3
+        names = [p.name for p in images]
+        assert names == ["1.png", "2.png", "2-1.png"]
+
+    def test_click_step_images_sorted_correctly(self, tmp_path):
+        """Click steps must interleave between slides, not sort lexicographically."""
+        slides_dir = tmp_path / "slides"
+        slides_dir.mkdir()
+        # Out-of-order creation to test sort
+        for name in ["3.png", "2-2.png", "1.png", "2.png", "2-1.png"]:
+            (slides_dir / name).touch()
+        for i in range(1, 6):
+            (tmp_path / f"audio_{i:03d}.wav").touch()
+
+        images, _ = _discover_temp_files(tmp_path)
+        names = [p.name for p in images]
+        assert names == ["1.png", "2.png", "2-1.png", "2-2.png", "3.png"]
 
 
 # ---------------------------------------------------------------------------
@@ -836,3 +991,367 @@ class TestRedoSlidesMode:
                                  "--redo-slides", "1", "--temp-dir", str(tmp_path)]):
             with pytest.raises(SystemExit):
                 main()
+
+    def test_redo_slides_slidev_with_clicks_regenerates_all_steps_for_slide(self, tmp_path):
+        """--redo-slides on a Slidev deck regenerates all steps for the specified slide."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide 1\n\n---\n\n# Slide 2\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        # 4 steps total: slide 1 → 2 steps, slide 2 → 2 steps
+        for i in range(1, 5):
+            (temp / f"audio_{i:03d}.wav").touch()
+        slides_subdir = temp / "slides"
+        slides_subdir.mkdir()
+        for name in ["1.png", "1-1.png", "2.png", "2-1.png"]:
+            (slides_subdir / name).touch()
+
+        slides = [
+            Slide(index=1, body="# Slide 1", notes="A.\n[click]\nB.", video=None),
+            Slide(index=2, body="# Slide 2", notes="C.\n[click]\nD.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.detect_format": MagicMock(return_value="slidev"),
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                Path(str(temp / "audio_001.wav")),
+                Path(str(temp / "audio_002.wav")),
+            ]),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--redo-slides", "1",
+             "--temp-dir", str(temp), "--format", "slidev"],
+            patches,
+        )
+
+        gen_call = mocks["deck2video.__main__.generate_audio_for_slides"]
+        gen_call.assert_called_once()
+        steps_arg = gen_call.call_args[0][0]
+        # Should regenerate both steps for slide 1 (slide_index==1)
+        assert len(steps_arg) == 2
+        assert all(s.slide_index == 1 for s in steps_arg)
+
+
+# ---------------------------------------------------------------------------
+# Manifest helpers: _write_manifest, _read_manifest
+# ---------------------------------------------------------------------------
+
+class TestManifestHelpers:
+    def test_round_trip(self, tmp_path):
+        from deck2video.__main__ import _read_manifest, _write_manifest
+        from deck2video.models import Step
+
+        steps = [
+            Step(index=1, slide_index=1, click=0, notes="Hello"),
+            Step(index=2, slide_index=2, click=0, notes=None),
+            Step(index=3, slide_index=2, click=1, notes="World"),
+        ]
+        _write_manifest(steps, tmp_path)
+
+        manifest = _read_manifest(tmp_path)
+        assert manifest is not None
+        assert len(manifest) == 3
+        assert manifest[0] == {"index": 1, "slide_index": 1, "click": 0}
+        assert manifest[2] == {"index": 3, "slide_index": 2, "click": 1}
+
+    def test_read_missing_returns_none(self, tmp_path):
+        from deck2video.__main__ import _read_manifest
+        assert _read_manifest(tmp_path) is None
+
+    def test_write_creates_steps_json(self, tmp_path):
+        from deck2video.__main__ import _write_manifest
+        from deck2video.models import Step
+
+        steps = [Step(index=1, slide_index=1, click=0, notes=None)]
+        _write_manifest(steps, tmp_path)
+        assert (tmp_path / "steps.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# _build_audio_remap helper
+# ---------------------------------------------------------------------------
+
+class TestBuildAudioRemap:
+    def test_no_change_returns_empty_map(self):
+        from deck2video.__main__ import _build_audio_remap
+        from deck2video.models import Step
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},
+            {"index": 3, "slide_index": 3, "click": 0},
+        ]
+        new_steps = [
+            Step(index=1, slide_index=1, click=0, notes=None),
+            Step(index=2, slide_index=2, click=0, notes=None),
+            Step(index=3, slide_index=3, click=0, notes=None),
+        ]
+        rename_map = _build_audio_remap(old_steps, new_steps, redo_slide_indices={2})
+        # Slide 2 is redo'd; slides 1 and 3 are unchanged and at same positions
+        assert rename_map == {}
+
+    def test_click_added_shifts_later_slides(self):
+        """Slide 2 gains a click (1→2 steps). Slide 3 shifts from index 3 to 4."""
+        from deck2video.__main__ import _build_audio_remap
+        from deck2video.models import Step
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},
+            {"index": 3, "slide_index": 3, "click": 0},
+        ]
+        new_steps = [
+            Step(index=1, slide_index=1, click=0, notes=None),
+            Step(index=2, slide_index=2, click=0, notes=None),  # redo'd
+            Step(index=3, slide_index=2, click=1, notes=None),  # redo'd (new step)
+            Step(index=4, slide_index=3, click=0, notes=None),  # shifted 3→4
+        ]
+        rename_map = _build_audio_remap(old_steps, new_steps, redo_slide_indices={2})
+        assert rename_map == {3: 4}
+
+    def test_click_removed_shifts_later_slides(self):
+        """Slide 2 loses a click (2→1 steps). Slide 3 shifts from index 4 to 3."""
+        from deck2video.__main__ import _build_audio_remap
+        from deck2video.models import Step
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},
+            {"index": 3, "slide_index": 2, "click": 1},
+            {"index": 4, "slide_index": 3, "click": 0},
+        ]
+        new_steps = [
+            Step(index=1, slide_index=1, click=0, notes=None),
+            Step(index=2, slide_index=2, click=0, notes=None),  # redo'd
+            Step(index=3, slide_index=3, click=0, notes=None),  # shifted 4→3
+        ]
+        rename_map = _build_audio_remap(old_steps, new_steps, redo_slide_indices={2})
+        assert rename_map == {4: 3}
+
+    def test_no_clicks_to_one_click(self):
+        """Slide 2 gains its first click (1→2 steps). Slides 3+ shift by 1."""
+        from deck2video.__main__ import _build_audio_remap
+        from deck2video.models import Step
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},
+            {"index": 3, "slide_index": 3, "click": 0},
+            {"index": 4, "slide_index": 4, "click": 0},
+        ]
+        new_steps = [
+            Step(index=1, slide_index=1, click=0, notes=None),
+            Step(index=2, slide_index=2, click=0, notes=None),  # redo'd
+            Step(index=3, slide_index=2, click=1, notes=None),  # redo'd (new)
+            Step(index=4, slide_index=3, click=0, notes=None),  # 3→4
+            Step(index=5, slide_index=4, click=0, notes=None),  # 4→5
+        ]
+        rename_map = _build_audio_remap(old_steps, new_steps, redo_slide_indices={2})
+        assert rename_map == {3: 4, 4: 5}
+
+
+# ---------------------------------------------------------------------------
+# _apply_audio_renames helper
+# ---------------------------------------------------------------------------
+
+class TestApplyAudioRenames:
+    def test_renames_shifted_files(self, tmp_path):
+        from deck2video.__main__ import _apply_audio_renames
+
+        # Create old audio files: slide3 was at index 3, now moves to 4
+        (tmp_path / "audio_001.wav").write_text("s1")
+        (tmp_path / "audio_003.wav").write_text("s3")
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},  # redo'd
+            {"index": 3, "slide_index": 3, "click": 0},
+        ]
+        rename_map = {3: 4}
+        _apply_audio_renames(rename_map, old_steps, redo_slide_indices={2}, temp_dir=tmp_path)
+
+        assert (tmp_path / "audio_001.wav").exists()   # unchanged
+        assert (tmp_path / "audio_004.wav").exists()   # renamed from 3
+        assert not (tmp_path / "audio_003.wav").exists()  # gone (became 4)
+
+    def test_deletes_redo_files(self, tmp_path):
+        from deck2video.__main__ import _apply_audio_renames
+
+        (tmp_path / "audio_002.wav").write_text("s2c0")
+        (tmp_path / "audio_003.wav").write_text("s2c1")
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},
+            {"index": 3, "slide_index": 2, "click": 1},
+        ]
+        _apply_audio_renames({}, old_steps, redo_slide_indices={2}, temp_dir=tmp_path)
+
+        assert not (tmp_path / "audio_002.wav").exists()
+        assert not (tmp_path / "audio_003.wav").exists()
+
+    def test_staging_avoids_collision(self, tmp_path):
+        """A→B and B→C chain must not clobber B before it's moved to C."""
+        from deck2video.__main__ import _apply_audio_renames
+
+        # Scenario: Slide 1 gains an extra click (1 click → 2 clicks).
+        # Old: s1c0@1, s1c1@2, s2@3, s3@4  (redo slide 1)
+        # New: s1c0@1, s1c1@2, s1c2@3, s2@4, s3@5
+        # rename_map: {3: 4, 4: 5}  — without staging, renaming 3→4 clobbers s3.
+        (tmp_path / "audio_003.wav").write_text("slide2")
+        (tmp_path / "audio_004.wav").write_text("slide3")
+
+        old_steps = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 1, "click": 1},
+            {"index": 3, "slide_index": 2, "click": 0},
+            {"index": 4, "slide_index": 3, "click": 0},
+        ]
+        rename_map = {3: 4, 4: 5}
+        _apply_audio_renames(rename_map, old_steps, redo_slide_indices={1}, temp_dir=tmp_path)
+
+        # Old slide 2 data must arrive at position 4
+        assert (tmp_path / "audio_004.wav").read_text() == "slide2"
+        # Old slide 3 data must arrive at position 5 (not lost to the 3→4 rename)
+        assert (tmp_path / "audio_005.wav").read_text() == "slide3"
+        # Positions 1 and 2 belonged to redo'd slide 1 (didn't exist, so just absent)
+        assert not (tmp_path / "audio_003.wav").exists()
+
+
+# ---------------------------------------------------------------------------
+# --redo-slides with click-count change (integration-style)
+# ---------------------------------------------------------------------------
+
+class TestRedoSlidesClickChange:
+    def _run_main(self, argv, patches):
+        import contextlib
+        from deck2video.__main__ import main
+
+        with patch("sys.argv", argv):
+            with contextlib.ExitStack() as stack:
+                mocks = {}
+                for target, mock_obj in patches.items():
+                    mocks[target] = stack.enter_context(patch(target, mock_obj))
+                main()
+                return mocks
+
+    def test_click_added_rerenders_and_remaps(self, tmp_path):
+        """When slide 2 gains a click, images are re-rendered and audio remapped."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide 1\n\n---\n\n# Slide 2\n\n---\n\n# Slide 3\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+
+        # Old structure: 3 slides, no clicks → 3 audio files
+        for i in range(1, 4):
+            (temp / f"audio_{i:03d}.wav").write_text(f"old{i}")
+        slides_dir = temp / "slides"
+        slides_dir.mkdir()
+        for i in range(1, 4):
+            (slides_dir / f"{i}.png").touch()
+
+        # Write manifest reflecting the old structure (no clicks)
+        old_manifest = [
+            {"index": 1, "slide_index": 1, "click": 0},
+            {"index": 2, "slide_index": 2, "click": 0},
+            {"index": 3, "slide_index": 3, "click": 0},
+        ]
+        import json as _json
+        (temp / "steps.json").write_text(_json.dumps(old_manifest))
+
+        # New slide 2 has a click → 4 steps total
+        new_slides = [
+            Slide(index=1, body="# 1", notes="A.", video=None),
+            Slide(index=2, body="# 2", notes="B.\n[click]\nC.", video=None),
+            Slide(index=3, body="# 3", notes="D.", video=None),
+        ]
+
+        # render mock creates the new image files
+        def fake_render(*args, **kw):
+            new_slides_dir = temp / "slides"
+            new_slides_dir.mkdir(exist_ok=True)
+            new_images = [
+                new_slides_dir / "1.png",
+                new_slides_dir / "2.png",
+                new_slides_dir / "2-1.png",
+                new_slides_dir / "3.png",
+            ]
+            for p in new_images:
+                p.touch()
+            return new_images
+
+        # TTS mock writes the audio files for redo'd steps
+        def fake_generate(steps, **kw):
+            paths = []
+            for s in steps:
+                p = temp / f"audio_{s.index:03d}.wav"
+                p.write_text(f"new{s.index}")
+                paths.append(p)
+            return paths
+
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.detect_format": MagicMock(return_value="slidev"),
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=new_slides),
+            "deck2video.__main__.render_slidev_slides": MagicMock(side_effect=fake_render),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(side_effect=fake_generate),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--redo-slides", "2",
+             "--temp-dir", str(temp), "--format", "slidev"],
+            patches,
+        )
+
+        # render_slidev_slides MUST have been called (click change requires re-render)
+        mocks["deck2video.__main__.render_slidev_slides"].assert_called_once()
+
+        # TTS called only for slide 2's steps (2 of them)
+        gen_call = mocks["deck2video.__main__.generate_audio_for_slides"]
+        gen_call.assert_called_once()
+        redo_steps = gen_call.call_args[0][0]
+        assert len(redo_steps) == 2
+        assert all(s.slide_index == 2 for s in redo_steps)
+
+        # audio_004.wav should hold old slide 3 data (renamed from position 3 → 4)
+        assert (temp / "audio_004.wav").read_text() == "old3"
+
+        # Manifest should be updated to reflect 4 steps
+        updated = _json.loads((temp / "steps.json").read_text())
+        assert len(updated) == 4
+
+    def test_no_manifest_falls_through_to_existing_path(self, tmp_path):
+        """If steps.json is absent, redo proceeds without click-change detection."""
+        md = tmp_path / "deck.md"
+        md.write_text("---\ntransition: fade\n---\n\n# Slide 1\n\n---\n\n# Slide 2\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        slides = [
+            Slide(index=1, body="# 1", notes="Hello.", video=None),
+            Slide(index=2, body="# 2", notes="World.", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.detect_format": MagicMock(return_value="slidev"),
+            "deck2video.__main__.parse_slidev": MagicMock(return_value=slides),
+            "deck2video.__main__.generate_audio_for_slides": MagicMock(return_value=[
+                temp / "audio_001.wav", temp / "audio_002.wav",
+            ]),
+        })
+
+        mocks = self._run_main(
+            ["deck2video", str(md), "--redo-slides", "2",
+             "--temp-dir", str(temp), "--format", "slidev"],
+            patches,
+        )
+
+        # render_slidev_slides should NOT be called (no click change detected)
+        mocks["deck2video.__main__.render_slidev_slides"].assert_not_called()
+        mocks["deck2video.__main__.assemble_video"].assert_called_once()
+
+        # Manifest should now exist (written by redo path)
+        assert (temp / "steps.json").exists()
+

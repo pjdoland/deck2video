@@ -35,6 +35,15 @@ Presentation format. Controls which parser and renderer are used.
 - **Details:** When set to `auto`, the format is [detected from the file content](format-detection.md). Set explicitly to skip detection or override a wrong guess.
 - **Example:** `--format slidev`
 
+### `--dark`
+
+Render Slidev slides in dark mode.
+
+- **Type:** flag (no argument)
+- **Default:** off
+- **Details:** Passes `--dark` to `slidev export`, producing images using Slidev's dark theme. Has no effect when rendering Marp presentations.
+- **Example:** `--dark`
+
 ### `--temp-dir`
 
 Directory for intermediate files (rendered PNGs, audio WAVs, video segments, log file).
@@ -180,7 +189,7 @@ Regenerate TTS audio for specific slides, then reassemble the full video.
 - **Default:** none
 - **Requires:** `--temp-dir` pointing to a directory from a previous run, plus the original input `.md` file
 - **Mutually exclusive with:** `--reassemble`
-- **Details:** Re-parses the markdown to get current speaker notes, regenerates audio for only the listed slides (overwriting the existing WAV files in place), then reassembles the full video. Slide numbers are 1-based and match the indices shown during a normal run. All TTS options (`--voice`, `--exaggeration`, etc.) apply to the regenerated slides.
+- **Details:** Re-parses the markdown to get current speaker notes, regenerates audio for only the listed slides (overwriting the existing WAV files in place), then reassembles the full video. Slide numbers are 1-based original slide numbers (not step indices). All TTS options (`--voice`, `--exaggeration`, etc.) apply to the regenerated slides. For Slidev decks with [click animations](writing-slides.md#slidev-click-animations), specifying a slide number regenerates **all** click steps for that slide (e.g., `--redo-slides 3` regenerates the initial state plus every click step of slide 3).
 - **Example:** `--redo-slides 2,5,7 --temp-dir ./build`
 
 ## Exit codes

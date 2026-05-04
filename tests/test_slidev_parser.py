@@ -146,3 +146,29 @@ class TestNoMarpDirectiveFiltering:
         slides = parse_slidev(str(md))
         # In Slidev mode, this comment is treated as a note, not filtered
         assert slides[0].notes == "_class: lead"
+
+
+class TestClickMarkers:
+    def test_click_markers_preserved_in_notes(self, tmp_path):
+        """The parser must NOT strip [click] markers — expansion happens downstream."""
+        md = tmp_path / "deck.md"
+        md.write_text(
+            "---\ntitle: Test\n---\n\n# Slide\n\n"
+            "<!-- First part.\n[click]\nSecond part. -->\n"
+        )
+        slides = parse_slidev(str(md))
+        assert slides[0].notes is not None
+        assert "[click]" in slides[0].notes
+        assert "First part." in slides[0].notes
+        assert "Second part." in slides[0].notes
+
+    def test_click_markers_in_multiple_comments(self, tmp_path):
+        """[click] in a second comment block is also preserved."""
+        md = tmp_path / "deck.md"
+        md.write_text(
+            "---\ntitle: Test\n---\n\n# Slide\n\n"
+            "<!-- Before click. -->\n<!-- [click] -->\n<!-- After click. -->\n"
+        )
+        slides = parse_slidev(str(md))
+        assert slides[0].notes is not None
+        assert "[click]" in slides[0].notes

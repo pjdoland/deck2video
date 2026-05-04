@@ -105,8 +105,32 @@ layout: center
 
 ---
 
+# Key Features
+
+<v-clicks>
+
+- Fast
+- Reliable
+- Scalable
+
+</v-clicks>
+
+<!--
+Let's look at what makes this system stand out.
+[click]
+First, it's fast — sub-millisecond latency.
+[click]
+Second, reliable — 99.99% uptime.
+[click]
+Third, scalable to millions of requests.
+-->
+
+---
+
 # Questions?
 ```
+
+The `[click]` markers in speaker notes sync narration to `v-click` / `v-clicks` animations. Each marker produces a separate video segment paired with the corresponding click-state image. See [Writing slides](docs/writing-slides.md#slidev-click-animations) for full details.
 
 ## Usage
 
@@ -133,6 +157,7 @@ python -m deck2video <input.md> [options]
 | `--audio-padding` | `0` | Milliseconds of silence before and after each slide's audio |
 | `--interactive`, `-i` | off | Review and approve each slide's TTS audio before continuing |
 | `--keep-temp` | off | Preserve intermediate files after rendering |
+| `--dark` | off | Render Slidev slides in dark mode (passes `--dark` to `slidev export`) |
 | `--reassemble` | off | Skip parse/render/TTS; assemble MP4 from existing temp dir files |
 | `--redo-slides` | none | Regenerate TTS for listed slides (e.g. `2,3,7`), then reassemble |
 
@@ -211,7 +236,8 @@ python -m deck2video deck.md --redo-slides 2,5 --temp-dir ./build --voice voice.
 
 This re-parses the markdown to get the current speaker notes, regenerates TTS
 audio for only the listed slides, then reassembles the full video. Slide
-numbers are 1-based and match the indices shown during a normal run.
+numbers are 1-based original slide numbers. For Slidev decks with click
+animations, all click steps for the specified slide are regenerated together.
 
 Both flags require `--temp-dir` pointing to a directory from a previous run.
 They are mutually exclusive (you can't use both at once).
@@ -269,14 +295,18 @@ key like `"Visual Studio Code"` will match before `"Code"` on its own.
 0. **Detect** -- Auto-detect the presentation format (Marp or Slidev) from
    frontmatter and content markers. Skipped when `--format` is explicit.
 1. **Parse** -- Split the Markdown on `---` delimiters, extract speaker notes
-   from `<!-- -->` comments.
-2. **Render** -- Call marp-cli (or Slidev CLI) to produce a PNG image per slide.
-3. **TTS** -- Synthesize each slide's notes with Chatterbox. Long notes are
-   split by sentence and reassembled into one WAV per slide. Slides without
+   from `<!-- -->` comments. For Slidev, expand slides into a flat list of
+   steps using `[click]` markers in the notes.
+2. **Render** -- Call marp-cli (or Slidev CLI) to produce a PNG image per step.
+   When click expansion produces more steps than slides, the Slidev CLI is
+   called with `--with-clicks`, generating one image per click state
+   (e.g. `2.png`, `2-1.png`, `2-2.png`).
+3. **TTS** -- Synthesize each step's notes with Chatterbox. Long notes are
+   split by sentence and reassembled into one WAV per step. Steps without
    notes become silent holds.
-4. **Assemble** -- Build a video segment per slide (image looped over the
+4. **Assemble** -- Build a video segment per step (image looped over the
    audio duration, or screencast video with TTS audio replacing the original
    track), then concatenate everything into the final MP4 with ffmpeg.
 
 With `--reassemble`, only step 4 runs. With `--redo-slides`, steps 1, 3
-(for selected slides only), and 4 run.
+(for selected slides and all their click steps), and 4 run.

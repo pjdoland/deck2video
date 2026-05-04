@@ -430,3 +430,29 @@ class TestAssembleVideo:
             cmd = c[0][0]
             af_idx = cmd.index("-af")
             assert "adelay=250|250" in cmd[af_idx + 1]
+
+    @patch("deck2video.assembler.get_audio_duration", return_value=3.0)
+    @patch("deck2video.assembler.subprocess.run", return_value=_ok_result())
+    def test_per_step_padding_list(self, mock_run, mock_dur, tmp_path):
+        """Per-step padding list applies a different value to each segment."""
+        images, audios = self._make_files(tmp_path, 3)
+        output = tmp_path / "out.mp4"
+        output.touch()
+
+        assemble_video(images, audios, output, temp_dir=tmp_path, fps=24,
+                       audio_padding_ms=[500, 0, 500])
+
+        calls = mock_run.call_args_list[:-1]  # exclude concat
+        # Segment 1: padding=500 → adelay present
+        cmd0 = calls[0][0][0]
+        af0 = cmd0.index("-af")
+        assert "adelay=500|500" in cmd0[af0 + 1]
+
+        # Segment 2: padding=0 → no adelay
+        cmd1 = calls[1][0][0]
+        assert "-af" not in cmd1
+
+        # Segment 3: padding=500 → adelay present
+        cmd2 = calls[2][0][0]
+        af2 = cmd2.index("-af")
+        assert "adelay=500|500" in cmd2[af2 + 1]
