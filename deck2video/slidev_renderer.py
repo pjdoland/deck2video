@@ -10,6 +10,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Slidev export spins up a full Chromium; allow a generous budget.
+RENDER_TIMEOUT_S = 600
+
 
 def check_slidev_cli() -> None:
     """Exit with helpful instructions if Slidev CLI is not available."""
@@ -78,7 +81,15 @@ def render_slidev_slides(
 
     logger.debug("slidev command: %s", " ".join(cmd))
     print(f"  Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
+    try:
+        result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True, timeout=RENDER_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        print(
+            f"Error: slidev export timed out after {RENDER_TIMEOUT_S}s. "
+            "Try a smaller deck or increase RENDER_TIMEOUT_S.",
+            file=sys.stderr,
+        )
+        raise RuntimeError(f"slidev export timed out after {RENDER_TIMEOUT_S}s") from exc
     logger.debug("slidev stderr: %s", result.stderr)
     if result.returncode != 0:
         print("slidev stderr:", result.stderr, file=sys.stderr)

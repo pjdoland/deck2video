@@ -2,55 +2,59 @@
 
 This roadmap was produced by a multi-persona review of the codebase. Seven personas (Backend / SRE / Product / Security / DX / ML-Audio / QA) independently produced 30 suggestions each (210 raw items), which were deduplicated to 147 unique candidates. Each persona then voted yay/nay on every candidate. The items below all received either 7/7 (unanimous) or 6/7 (one dissent) approval.
 
+**Status legend:** ✅ done · 🚧 in progress · (unmarked = pending)
+
 ## Consensus Ranking Table
 
 Legend: **B**ackend · **S**RE · **P**M · **Sec**urity · **D**X · **M**L · **Q**A. ✓ = yay, ✗ = nay.
 
-| ID | Item | Score | B | S | P | Sec | D | M | Q |
-|----|------|:-----:|:-:|:-:|:-:|:--:|:-:|:-:|:-:|
-| **E08** | Pin dependencies in requirements.txt with hashes | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **E10** | Add timeouts to every subprocess call | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **E13** | Validate input markdown size + --max-slides guardrail | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **E27** | Validate pronunciation JSON value types & cap size | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **E28** | Sanity-cap padding/hold-duration/fps numeric args | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **F14** | `doctor` preflight subcommand | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **B05** | get_video_fps crashes on no-video-stream / 0-denom | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **B28** | Ctrl-C leaves orphan child processes (no SIGINT handler) | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **B37** | Model never moved off GPU after pipeline ends | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **E15** | Verify concat segments share pix_fmt/timebase before concat | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **E40** | Drop -shortest in favor of explicit -t at frame boundary | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **E46** | Per-slide deterministic seed for reproducible regens | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **F01** | --dry-run mode (parse + plan, no render/TTS) | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **F04** | Content-hash TTS cache (skip unchanged slides) | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **F08** | Pluggable TTS backend abstraction | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **F09** | Resume-from-failure via checkpoint status in steps.json | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **F11** | Dockerfile + container image | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **F15** | Output integrity .sha256 + manifest.json sidecar | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **F16** | Configurable retry policy with backoff | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **F28** | Disable Slidev remote asset fetches by default | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **F34** | `lint` subcommand (click-mismatch, long notes) | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B01** | Mutating slide.notes corrupts input on retry | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B08** | int() truncates 29.97 → 29 fps causing A/V drift | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B09** | Concat file unquoted relative names | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **B10** | TTS-failure-to-silence loses degraded list from summary | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B12** | No disk-space check before render | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **B13** | setup.sh leaks shell options when sourced | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **B16** | --redo-slides slide-vs-step indexing confusing | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B17** | No integrity check between runs (stale audio + new images) | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B18** | Pronunciation overrides match substrings (no \b boundaries) | **6/7** | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **B21** | npx --yes for marp installs whatever registry serves | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **B22** | npx @slidev/cli without --yes can hang on stdin | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **B24** | open() calls without encoding= | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
-| **B31** | --reassemble silently ignores changed --voice | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B32** | _parse_slide_list dedupes silently / rejects ranges | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B34** | Interactive regens use same seed → near-identical retries | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B36** | adelay + -shortest can clip trailing pad | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B39** | get_audio_duration via ffprobe drifts vs sample-accurate | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| **B40** | Concat -c copy + screencast mix can silently drift A/V | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| ID | Item | Status | Score | B | S | P | Sec | D | M | Q |
+|----|------|:------:|:-----:|:-:|:-:|:-:|:--:|:-:|:-:|:-:|
+| **E08** | Pin dependencies in requirements.txt with hashes | ✅ partial (versions pinned, hashes deferred) | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **E10** | Add timeouts to every subprocess call | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **E13** | Validate input markdown size + --max-slides guardrail | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **E27** | Validate pronunciation JSON value types & cap size | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **E28** | Sanity-cap padding/hold-duration/fps numeric args | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **F14** | `doctor` preflight subcommand | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **B05** | get_video_fps crashes on no-video-stream / 0-denom | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **B28** | Ctrl-C leaves orphan child processes (no SIGINT handler) | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **B37** | Model never moved off GPU after pipeline ends | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **E15** | Verify concat segments share pix_fmt/timebase before concat | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **E40** | Drop -shortest in favor of explicit -t at frame boundary | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **E46** | Per-slide deterministic seed for reproducible regens | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **F01** | --dry-run mode (parse + plan, no render/TTS) | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **F04** | Content-hash TTS cache (skip unchanged slides) | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **F08** | Pluggable TTS backend abstraction | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **F09** | Resume-from-failure via checkpoint status in steps.json | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **F11** | Dockerfile + container image | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **F15** | Output integrity .sha256 + manifest.json sidecar | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **F16** | Configurable retry policy with backoff | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **F28** | Disable Slidev remote asset fetches by default | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **F34** | `lint` subcommand (click-mismatch, long notes) | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B01** | Mutating slide.notes corrupts input on retry | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B08** | int() truncates 29.97 → 29 fps causing A/V drift | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B09** | Concat file unquoted relative names | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **B10** | TTS-failure-to-silence loses degraded list from summary | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B12** | No disk-space check before render | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **B13** | setup.sh leaks shell options when sourced | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **B16** | --redo-slides slide-vs-step indexing confusing | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B17** | No integrity check between runs (stale audio + new images) | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B18** | Pronunciation overrides match substrings (no \b boundaries) | | **6/7** | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **B21** | npx --yes for marp installs whatever registry serves | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **B22** | npx @slidev/cli without --yes can hang on stdin | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **B24** | open() calls without encoding= | | **6/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| **B31** | --reassemble silently ignores changed --voice | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B32** | _parse_slide_list dedupes silently / rejects ranges | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B34** | Interactive regens use same seed → near-identical retries | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B36** | adelay + -shortest can clip trailing pad | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B39** | get_audio_duration via ffprobe drifts vs sample-accurate | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| **B40** | Concat -c copy + screencast mix can silently drift A/V | | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
 
 ---
 
-## 🟢 First Pass — Easiest to Implement (≤1 day each, mostly local changes)
+## 🟢 First Pass — Easiest to Implement ✅ shipped
+
+All items in this section landed in the `reliability-and-validation-pass` PR (see commits `89c7fa3` and follow-ups). Each item below kept its full description for future readers; the consensus table above shows the status marker.
 
 ### **E10 — Add timeouts to every subprocess call** (7/7)
 Every `subprocess.run` in `marp_renderer.py:54`, `slidev_renderer.py:81`, `assembler.py:62/123/182`, `utils.py:74/97`, and `tts.py` runs without a `timeout=` kwarg. A hung Chromium (Slidev export), wedged ffmpeg, or stuck npx call pins the entire pipeline indefinitely. Add a sensible per-call timeout (e.g. 600s render, 120s ffmpeg, 30s ffprobe) wired through a single helper.
@@ -208,9 +212,9 @@ Real fix is a normalization pass: re-encode all segments to identical `-video_tr
 
 ## Recommended Sequencing
 
-1. **First PR** (1 day): all 🟢 easy items as a single "reliability and validation pass".
-2. **Second PR** (~3 days): **E13 + F14 + B28 + B37** — the 7/7 moderate group as a "preflight and lifecycle pass".
-3. **Third PR** (~1 week): **F04 + E46 + B17** as a coherent "iteration speed + correctness" bundle.
+1. ✅ **First PR** (shipped): all 🟢 easy items as a single "reliability and validation pass".
+2. **Second PR** (~3 days, next up): **E13 + F14 + B28 + B37** — the remaining 7/7 group as a "preflight and lifecycle pass".
+3. **Third PR** (~1 week): **F04 + B17** as an "iteration speed + correctness" bundle (E46 already shipped in pass 1, so cache invalidation can rely on its determinism).
 4. **Future**: **F08, F09, B40** each warrant their own design discussion before code.
 
 ## Methodology Notes

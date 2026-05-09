@@ -10,6 +10,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
 fi
 
+# Save the caller's shell options so we can restore them at the end.
+# `set +o` emits a list of `set ±o NAME` commands suitable for `eval`.
+DECK2VIDEO_PRIOR_SHOPTS=$(set +o)
 set -euo pipefail
 
 VENV_DIR=".venv"
@@ -158,4 +161,7 @@ echo "Setup complete. You're ready to go:"
 echo "  python -m deck2video presentation.md --voice path/to/voice.wav"
 echo ""
 
-set +euo pipefail
+# Restore the caller's prior shell options so sourcing this script doesn't
+# permanently mutate set -e/-u/pipefail in the user's interactive shell.
+eval "$DECK2VIDEO_PRIOR_SHOPTS"
+unset DECK2VIDEO_PRIOR_SHOPTS

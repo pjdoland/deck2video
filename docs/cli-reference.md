@@ -98,7 +98,7 @@ Chatterbox vocal exaggeration level. Controls how expressive the speech sounds.
 
 - **Type:** float
 - **Default:** `0.5`
-- **Range:** 0.0 and up (practical range: 0.0–1.0)
+- **Range:** 0.0–2.0 (practical range: 0.0–1.0; values outside the range are rejected at parse time)
 - **Details:** See [Voice and TTS](voice-and-tts.md#--exaggeration-default-05) for tuning guidance.
 - **Example:** `--exaggeration 0.7`
 
@@ -108,7 +108,7 @@ Chatterbox classifier-free guidance weight.
 
 - **Type:** float
 - **Default:** `0.5`
-- **Range:** 0.0 and up (practical range: 0.0–1.0)
+- **Range:** 0.0–1.0 (values outside the range are rejected at parse time)
 - **Details:** See [Voice and TTS](voice-and-tts.md#--cfg-weight-default-05) for tuning guidance.
 - **Example:** `--cfg-weight 0.3`
 
@@ -118,7 +118,7 @@ Chatterbox sampling temperature.
 
 - **Type:** float
 - **Default:** `0.8`
-- **Range:** 0.0 and up (practical range: 0.3–1.2)
+- **Range:** 0.0–2.0 (practical range: 0.3–1.2; values outside the range are rejected at parse time)
 - **Details:** See [Voice and TTS](voice-and-tts.md#--temperature-default-08) for tuning guidance.
 - **Example:** `--temperature 0.6`
 
@@ -139,6 +139,7 @@ Duration (in seconds) to hold slides that have no speaker notes.
 
 - **Type:** float
 - **Default:** `3.0`
+- **Range:** 0.1–300 (values outside the range are rejected at parse time)
 - **Example:** `--hold-duration 5.0`
 
 ### `--fps`
@@ -147,7 +148,8 @@ Output video framerate.
 
 - **Type:** integer
 - **Default:** Auto-detected from screencast videos, or 24 fps if no screencasts
-- **Details:** See [Video Assembly](video-assembly.md#framerate) for auto-detection behavior.
+- **Range:** 1–120 (values outside the range are rejected at parse time)
+- **Details:** When auto-detected from screencasts, the source's fractional rate (e.g. `30000/1001` = 29.97) is preserved end-to-end rather than truncated to int. See [Video Assembly](video-assembly.md#framerate) for auto-detection behavior.
 - **Example:** `--fps 30`
 
 ### `--audio-padding`
@@ -156,8 +158,19 @@ Milliseconds of silence added before and after each slide's audio.
 
 - **Type:** integer
 - **Default:** `0`
+- **Range:** 0–60000 (values outside the range are rejected at parse time)
 - **Details:** A value of 300 adds 300ms before and 300ms after, extending each slide by 600ms total. See [Video Assembly](video-assembly.md#audio-padding).
 - **Example:** `--audio-padding 300`
+
+### `--with-clicks-audio-padding`
+
+Milliseconds of silence before and after each click-step's audio (Slidev only).
+
+- **Type:** integer
+- **Default:** `0`
+- **Range:** 0–60000
+- **Details:** Applies only to per-step audio for click animations. Slide-boundary steps (the initial reveal of each slide) use `--audio-padding`; subsequent click steps within a slide use this value. Lets you keep tight pacing within a slide (e.g. `0`) while still adding breathing room between slides (`--audio-padding 300`).
+- **Example:** `--with-clicks-audio-padding 0 --audio-padding 300`
 
 ## Workflow options
 
@@ -178,19 +191,19 @@ Skip parsing, rendering, and TTS. Assemble the final MP4 directly from existing 
 - **Default:** off
 - **Requires:** `--temp-dir` pointing to a directory from a previous run
 - **Mutually exclusive with:** `--redo-slides`
-- **Details:** Discovers `slides.*` image files and `audio_*.wav` files in the temp directory. Validates that the counts match. Then runs only the assembly step. Useful after manually editing audio WAV files, or after changing `--audio-padding` or `--fps` without wanting to regenerate everything.
+- **Details:** Discovers `slides.*` image files and `audio_*.wav` files in the temp directory. Validates that the counts match. Then runs only the assembly step. Useful after manually editing audio WAV files, or after changing `--audio-padding` or `--fps` without wanting to regenerate everything. If you also pass TTS-only flags (`--voice`, `--pronunciations`, `--interactive`, `--language`, etc.), a `Note: ... ignored in --reassemble mode` is printed to stderr — those flags only take effect when TTS actually runs.
 - **Example:** `--reassemble --temp-dir ./build`
 
 ### `--redo-slides`
 
 Regenerate TTS audio for specific slides, then reassemble the full video.
 
-- **Type:** string (comma-separated slide numbers, 1-based)
+- **Type:** string (comma-separated slide numbers and/or ranges, 1-based)
 - **Default:** none
 - **Requires:** `--temp-dir` pointing to a directory from a previous run, plus the original input `.md` file
 - **Mutually exclusive with:** `--reassemble`
-- **Details:** Re-parses the markdown to get current speaker notes, regenerates audio for only the listed slides (overwriting the existing WAV files in place), then reassembles the full video. Slide numbers are 1-based original slide numbers (not step indices). All TTS options (`--voice`, `--exaggeration`, etc.) apply to the regenerated slides. For Slidev decks with [click animations](writing-slides.md#slidev-click-animations), specifying a slide number regenerates **all** click steps for that slide (e.g., `--redo-slides 3` regenerates the initial state plus every click step of slide 3).
-- **Example:** `--redo-slides 2,5,7 --temp-dir ./build`
+- **Details:** Re-parses the markdown to get current speaker notes, regenerates audio for only the listed slides (overwriting the existing WAV files in place), then reassembles the full video. Slide numbers are 1-based original slide numbers (not step indices). Accepts both single numbers and inclusive ranges: `2,5,7` or `2-5,8` or `1-3,7,10-12`. Duplicates are deduplicated with a one-line note to stderr; descending ranges (`5-3`) are rejected. All TTS options (`--voice`, `--exaggeration`, etc.) apply to the regenerated slides. Regeneration is now deterministic per slide/click — if you re-run with the same notes and TTS settings you get bit-identical audio. For Slidev decks with [click animations](writing-slides.md#slidev-click-animations), specifying a slide number regenerates **all** click steps for that slide (e.g., `--redo-slides 3` regenerates the initial state plus every click step of slide 3).
+- **Example:** `--redo-slides 2-5,8 --temp-dir ./build`
 
 ## Exit codes
 

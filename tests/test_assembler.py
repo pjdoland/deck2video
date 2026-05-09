@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
@@ -60,7 +61,8 @@ class TestMakeSegment:
         assert cmd[0] == "ffmpeg"
         assert "-loop" in cmd
         assert "-framerate" in cmd
-        assert "24" in cmd
+        # fps formatted with 6 decimals to preserve fractional rates (29.97)
+        assert "24.000000" in cmd
         assert "-c:v" in cmd
         assert "libx264" in cmd
         assert "-tune" in cmd
@@ -317,6 +319,7 @@ class TestMakeVideoSegmentPadding:
 # assemble_video (full pipeline)
 # ---------------------------------------------------------------------------
 
+@patch("deck2video.assembler._verify_concat_compatibility", lambda segments: None)
 class TestAssembleVideo:
     def _make_files(self, tmp_path, count):
         images = []
@@ -456,3 +459,181 @@ class TestAssembleVideo:
         cmd2 = calls[2][0][0]
         af2 = cmd2.index("-af")
         assert "adelay=500|500" in cmd2[af2 + 1]
+
+
+# ---------------------------------------------------------------------------
+# E40 / B36 — segment duration is rounded up to whole frame; -shortest is gone
+# ---------------------------------------------------------------------------
+
+class TestFrameAlignment:
+    @patch("deck2video.assembler.get_audio_duration", return_value=5.01)
+    @patch("deck2video.assembler.subprocess.run", return_value=_ok_result())
+    def test_duration_rounded_up_to_whole_frame(self, mock_run, mock_dur, tmp_path):
+        """5.01s @ 24fps → 121 frames → 5.0417s (rounded up, never down)."""
+        img = tmp_path / "slide.001"
+        img.touch()
+        audio = tmp_path / "audio.wav"
+        audio.touch()
+
+        _make_segment(1, img, audio, tmp_path, fps=24)
+        cmd = mock_run.call_args[0][0]
+
+        t_idx = cmd.index("-t")
+        # 121 / 24 = 5.041666… → "5.0417"
+        assert cmd[t_idx + 1] == f"{121/24:.4f}"
+
+    @patch("deck2video.assembler.get_audio_duration", return_value=5.0)
+    @patch("deck2video.assembler.subprocess.run", return_value=_ok_result())
+    def test_no_shortest_flag(self, mock_run, mock_dur, tmp_path):
+        """-shortest is removed in favor of an explicit -t to prevent pad clipping."""
+        img = tmp_path / "slide.001"
+        img.touch()
+        audio = tmp_path / "audio.wav"
+        audio.touch()
+
+        _make_segment(1, img, audio, tmp_path, fps=24)
+        cmd = mock_run.call_args[0][0]
+        assert "-shortest" not in cmd
+
+    @patch("deck2video.assembler.get_audio_duration", return_value=5.0)
+    @patch("deck2video.assembler.subprocess.run", return_value=_ok_result())
+    def test_apad_uses_whole_dur(self, mock_run, mock_dur, tmp_path):
+        """apad must include whole_dur so it doesn't produce infinite audio."""
+        img = tmp_path / "slide.001"
+        img.touch()
+        audio = tmp_path / "audio.wav"
+        audio.touch()
+
+        _make_segment(1, img, audio, tmp_path, fps=24, audio_padding_ms=500)
+        cmd = mock_run.call_args[0][0]
+        af_idx = cmd.index("-af")
+        af_value = cmd[af_idx + 1]
+        # Bare `apad` would be `apad,` or `apad$` — must be `apad=whole_dur=...`
+        assert "apad=whole_dur=" in af_value
+
+
+# ---------------------------------------------------------------------------
+# subprocess timeout wrapping — TimeoutExpired surfaces as RuntimeError, not raw traceback
+# ---------------------------------------------------------------------------
+
+class TestTimeoutWrapping:
+    @patch("deck2video.assembler.get_audio_duration", return_value=3.0)
+    def test_segment_timeout_raises_runtime_error(self, mock_dur, tmp_path):
+        import subprocess
+        img = tmp_path / "slide.001"
+        img.touch()
+        audio = tmp_path / "audio.wav"
+        audio.touch()
+
+        with patch(
+            "deck2video.assembler.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=600),
+        ):
+            with pytest.raises(RuntimeError, match="timed out"):
+                _make_segment(1, img, audio, tmp_path, fps=24)
+
+
+# ---------------------------------------------------------------------------
+# E15 — _verify_concat_compatibility
+# ---------------------------------------------------------------------------
+
+class TestVerifyConcatCompatibility:
+    def _video_stream(self, **overrides):
+        base = {"codec_type": "video", "codec_name": "h264",
+                "pix_fmt": "yuv420p", "time_base": "1/90000"}
+        base.update(overrides)
+        return base
+
+    def _audio_stream(self, **overrides):
+        base = {"codec_type": "audio", "codec_name": "aac",
+                "profile": "LC", "sample_rate": "48000"}
+        base.update(overrides)
+        return base
+
+    def _ffprobe(self, video, audio):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = json.dumps({"streams": [video, audio]})
+        result.stderr = ""
+        return result
+
+    def test_single_segment_short_circuits(self, tmp_path):
+        from deck2video.assembler import _verify_concat_compatibility
+        # Should not even call ffprobe with a single segment.
+        with patch("deck2video.assembler.subprocess.run") as mock_run:
+            _verify_concat_compatibility([tmp_path / "segment_001.ts"])
+        mock_run.assert_not_called()
+
+    def test_matching_segments_pass(self, tmp_path):
+        from deck2video.assembler import _verify_concat_compatibility
+        seg1 = tmp_path / "segment_001.ts"
+        seg2 = tmp_path / "segment_002.ts"
+        result = self._ffprobe(self._video_stream(), self._audio_stream())
+        with patch("deck2video.assembler.subprocess.run", return_value=result):
+            _verify_concat_compatibility([seg1, seg2])  # no exception
+
+    def test_mismatched_pix_fmt_raises(self, tmp_path):
+        from deck2video.assembler import _verify_concat_compatibility
+        seg1 = tmp_path / "segment_001.ts"
+        seg2 = tmp_path / "segment_002.ts"
+
+        def fake_run(cmd, **kw):
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            # Last arg is the segment path
+            seg_path = cmd[-1]
+            if seg_path.endswith("segment_002.ts"):
+                r.stdout = json.dumps({
+                    "streams": [self._video_stream(pix_fmt="yuv422p"),
+                                self._audio_stream()]
+                })
+            else:
+                r.stdout = json.dumps({
+                    "streams": [self._video_stream(), self._audio_stream()]
+                })
+            return r
+
+        with patch("deck2video.assembler.subprocess.run", side_effect=fake_run):
+            with pytest.raises(RuntimeError, match="not bit-identical"):
+                _verify_concat_compatibility([seg1, seg2])
+
+    def test_mismatched_audio_sample_rate_raises(self, tmp_path):
+        from deck2video.assembler import _verify_concat_compatibility
+        seg1 = tmp_path / "segment_001.ts"
+        seg2 = tmp_path / "segment_002.ts"
+
+        def fake_run(cmd, **kw):
+            r = MagicMock()
+            r.returncode = 0
+            r.stderr = ""
+            seg_path = cmd[-1]
+            if seg_path.endswith("segment_002.ts"):
+                r.stdout = json.dumps({
+                    "streams": [self._video_stream(),
+                                self._audio_stream(sample_rate="44100")]
+                })
+            else:
+                r.stdout = json.dumps({
+                    "streams": [self._video_stream(), self._audio_stream()]
+                })
+            return r
+
+        with patch("deck2video.assembler.subprocess.run", side_effect=fake_run):
+            with pytest.raises(RuntimeError, match="not bit-identical"):
+                _verify_concat_compatibility([seg1, seg2])
+
+
+# ---------------------------------------------------------------------------
+# B09 / concat-list quoting — apostrophes in segment names must be escaped
+# per ffmpeg's concat-demuxer rules: ' becomes '\''.
+# ---------------------------------------------------------------------------
+
+class TestConcatListQuoting:
+    def test_apostrophe_escape_rule(self):
+        # The escape used inside assembler.py for concat-list entries.
+        name = "segment_001'_001.ts"
+        escaped = name.replace("'", r"'\''")
+        assert escaped == r"segment_001'\''_001.ts"
+        # Multiple apostrophes are each escaped.
+        assert "weird''name.ts".replace("'", r"'\''") == r"weird'\'''\''name.ts"

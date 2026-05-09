@@ -199,3 +199,73 @@ class TestGetVideoFps:
         with patch("deck2video.utils.subprocess.run", return_value=result):
             with pytest.raises(RuntimeError, match="ffprobe failed"):
                 get_video_fps(tmp_path / "v.mp4")
+
+    def test_no_video_stream_raises_clean_error(self, tmp_path):
+        """ffprobe returning empty streams (audio-only file) must give a clear error."""
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = json.dumps({"streams": []})
+        result.stderr = ""
+        with patch("deck2video.utils.subprocess.run", return_value=result):
+            with pytest.raises(RuntimeError, match="No video stream"):
+                get_video_fps(tmp_path / "audio.m4a")
+
+    def test_zero_denominator_raises_clean_error(self, tmp_path):
+        """A 0/0 frame rate (legal in malformed video) must not become ZeroDivisionError."""
+        with patch(
+            "deck2video.utils.subprocess.run",
+            return_value=self._mock_fps_result("0/0"),
+        ):
+            with pytest.raises(RuntimeError, match="zero-denominator"):
+                get_video_fps(tmp_path / "broken.mp4")
+
+    def test_malformed_rate_string_raises_clean_error(self, tmp_path):
+        """A frame rate without a slash must not be a confusing unpacking error."""
+        with patch(
+            "deck2video.utils.subprocess.run",
+            return_value=self._mock_fps_result("not-a-fraction"),
+        ):
+            with pytest.raises(RuntimeError, match="frame rate"):
+                get_video_fps(tmp_path / "broken.mp4")
+
+
+# ---------------------------------------------------------------------------
+# get_audio_duration: WAV-header sample-accurate path (B39)
+# ---------------------------------------------------------------------------
+
+class TestGetAudioDurationWav:
+    """When the source is a real WAV, we read the header instead of ffprobe."""
+
+    def test_wav_uses_header_not_ffprobe(self, tmp_path):
+        """Sample-accurate path: real WAV file, no ffprobe call."""
+        wav = tmp_path / "audio.wav"
+        # Generate a real silent WAV — its duration is exact.
+        generate_silent_wav(wav, duration=2.5, sample_rate=24000)
+        with patch("deck2video.utils.subprocess.run") as mock_run:
+            d = get_audio_duration(wav)
+        assert d == pytest.approx(2.5, abs=1e-6)
+        mock_run.assert_not_called()  # Did NOT touch ffprobe
+
+    def test_non_wav_falls_back_to_ffprobe(self, tmp_path):
+        """For .aac / .m4a / .mp3 we still go through ffprobe."""
+        m4a = tmp_path / "audio.m4a"
+        m4a.write_bytes(b"fake")
+        with patch(
+            "deck2video.utils.subprocess.run",
+            return_value=_mock_ffprobe_result("3.456"),
+        ) as mock_run:
+            d = get_audio_duration(m4a)
+        assert d == pytest.approx(3.456)
+        mock_run.assert_called_once()
+
+    def test_corrupt_wav_falls_back_to_ffprobe(self, tmp_path):
+        """A .wav extension on a non-WAV file falls back rather than crashing."""
+        wav = tmp_path / "fake.wav"
+        wav.write_bytes(b"not a riff")
+        with patch(
+            "deck2video.utils.subprocess.run",
+            return_value=_mock_ffprobe_result("1.0"),
+        ) as mock_run:
+            d = get_audio_duration(wav)
+        assert d == pytest.approx(1.0)
+        mock_run.assert_called_once()

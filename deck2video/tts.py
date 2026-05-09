@@ -17,16 +17,40 @@ from .utils import generate_silent_wav
 logger = logging.getLogger(__name__)
 
 
+PRONUNCIATIONS_MAX_ENTRIES = 1000
+PRONUNCIATIONS_MAX_FIELD_LEN = 200
+
+
 def load_pronunciations(path: Path) -> dict[str, str]:
     """Load a pronunciation mapping from a JSON file.
 
     The file should be a flat object mapping words/phrases to their
-    phonetic respellings, e.g. ``{"kubectl": "cube control"}``.
+    phonetic respellings, e.g. ``{"kubectl": "cube control"}``. Entries
+    are validated as ``str → str`` and capped at ``PRONUNCIATIONS_MAX_ENTRIES``
+    items / ``PRONUNCIATIONS_MAX_FIELD_LEN`` chars per key/value to prevent
+    pathological inputs from hanging regex compilation.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         mapping = json.load(f)
     if not isinstance(mapping, dict):
         raise ValueError(f"Pronunciations file must be a JSON object, got {type(mapping).__name__}")
+    if len(mapping) > PRONUNCIATIONS_MAX_ENTRIES:
+        raise ValueError(
+            f"Pronunciations file has {len(mapping)} entries; max {PRONUNCIATIONS_MAX_ENTRIES} allowed"
+        )
+    for key, value in mapping.items():
+        if not isinstance(key, str):
+            raise ValueError(f"Pronunciation key must be a string, got {type(key).__name__}: {key!r}")
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Pronunciation value for {key!r} must be a string, got {type(value).__name__}"
+            )
+        if not key:
+            raise ValueError("Pronunciation keys must not be empty")
+        if len(key) > PRONUNCIATIONS_MAX_FIELD_LEN or len(value) > PRONUNCIATIONS_MAX_FIELD_LEN:
+            raise ValueError(
+                f"Pronunciation key/value too long (max {PRONUNCIATIONS_MAX_FIELD_LEN} chars): {key!r}"
+            )
     return mapping
 
 
@@ -171,9 +195,43 @@ def _move_model_to_cpu(model):
     print("  Moved model to CPU due to GPU memory pressure")
 
 
+def _seed_for_slide(slide) -> int:
+    """Compute a deterministic per-step seed.
+
+    For Marp Slides the seed is the 1-based index. For Slidev Steps the
+    seed mixes slide_index and click via bit-shift (avoiding any chance of
+    (slide=2, click=0) colliding with (slide=1, click=1000)) so each step
+    is distinct but stable across runs — this is what makes ``--redo-slides``
+    reproducible.
+    """
+    slide_index = getattr(slide, "slide_index", slide.index)
+    click = getattr(slide, "click", 0)
+    return (slide_index << 16) | (click & 0xFFFF)
+
+
+def _seed_torch(seed: int) -> None:
+    """Seed CPU and (when available) GPU torch RNGs.
+
+    ``torch.manual_seed`` alone seeds CPU only; CUDA and MPS keep their own
+    generator state and need their own seed call. Without these, regens on
+    GPU vary even though CPU regens are bit-identical.
+    """
+    import torch
+
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if torch.backends.mps.is_available():
+        # MPS lacks a manual_seed_all but exposes its own.
+        manual_seed = getattr(torch.mps, "manual_seed", None)
+        if manual_seed is not None:
+            manual_seed(seed)
+
+
 def _generate_slide_audio(
     model,
     slide,
+    text: str,
     *,
     voice_path: str | None,
     exaggeration: float,
@@ -182,14 +240,18 @@ def _generate_slide_audio(
     language: str | None,
     flush_fn,
 ):
-    """Generate and return concatenated audio for a single slide's notes.
+    """Generate and return concatenated audio for the given text.
 
-    Returns the combined waveform tensor (on CPU) and sample rate.
-    Raises on failure so the caller can handle fallback.
+    ``text`` is the (possibly pronunciation-substituted) narration string;
+    ``slide`` is kept only for labels and the deterministic seed. Returns
+    the combined waveform tensor (on CPU) and sample rate. Raises on
+    failure so the caller can handle fallback.
     """
     import torch
 
-    sentences = _split_sentences(slide.notes)
+    _seed_torch(_seed_for_slide(slide))
+
+    sentences = _split_sentences(text)
     sentence_groups = [
         " ".join(sentences[i:i + 3])
         for i in range(0, len(sentences), 3)
@@ -280,11 +342,12 @@ def generate_audio_for_slides(
             print(f"  {_label(slide)}: silent ({hold_duration}s)")
         else:
             logger.debug("%s: notes text=%r", _label(slide), slide.notes)
+            text = slide.notes
             if pronunciations:
-                original = slide.notes
-                slide.notes = apply_pronunciations(slide.notes, pronunciations)
-                if slide.notes != original:
-                    logger.debug("%s: after pronunciations=%r", _label(slide), slide.notes)
+                substituted = apply_pronunciations(text, pronunciations)
+                if substituted != text:
+                    logger.debug("%s: after pronunciations=%r", _label(slide), substituted)
+                text = substituted
 
             tts_kwargs = dict(
                 voice_path=voice_path,
@@ -296,7 +359,7 @@ def generate_audio_for_slides(
             )
             try:
                 combined, sr, n_sent, n_chunks = _generate_slide_audio(
-                    model, slide, **tts_kwargs,
+                    model, slide, text, **tts_kwargs,
                 )
             except Exception as exc:
                 if on_gpu and _is_oom(exc):
@@ -306,7 +369,7 @@ def generate_audio_for_slides(
                     on_gpu = False
                     try:
                         combined, sr, n_sent, n_chunks = _generate_slide_audio(
-                            model, slide, **tts_kwargs,
+                            model, slide, text, **tts_kwargs,
                         )
                     except Exception as retry_exc:
                         msg = f"{_label(slide)}: TTS failed on CPU ({retry_exc}), substituting silence"
@@ -343,11 +406,14 @@ def generate_audio_for_slides(
                         print("  Quitting pipeline.")
                         sys.exit(0)
                     # choice == "n" or anything else: regenerate
+                    # Note: regen currently uses the same deterministic seed,
+                    # so output will be identical. Per-regen seed bumping is
+                    # tracked as a follow-up (B34 in ROADMAP.md).
                     logger.debug("%s: interactive — regenerating", _label(slide))
                     print(f"  Regenerating {_label(slide)}…")
                     try:
                         combined, sr, n_sent, n_chunks = _generate_slide_audio(
-                            model, slide, **tts_kwargs,
+                            model, slide, text, **tts_kwargs,
                         )
                     except Exception as regen_exc:
                         print(f"  Regeneration failed ({regen_exc}), keeping previous audio.", file=sys.stderr)

@@ -192,10 +192,11 @@ python -m deck2video deck.md --pronunciations pronunciations.json
 
 ### Gotchas
 
-- The pronunciation file must be valid JSON. Keys and values must be strings.
+- The pronunciation file must be valid JSON. Keys and values must be strings; non-string values are rejected at load time with a clear error.
+- Empty keys are rejected. Keys and values are capped at 200 characters each, and the file is capped at 1000 entries — pathological inputs that would otherwise hang regex compilation are rejected up front.
 - If the file doesn't exist, the pipeline exits with an error before starting.
 - The number of loaded overrides is printed at startup: `Loaded 8 pronunciation override(s)`.
-- Replacements are applied to each slide's notes text before it's sent to the TTS model. The original notes are modified in place.
+- Replacements are applied to each slide's notes text before it's sent to the TTS model. The original `Slide.notes` field is left untouched, so retries and `--redo-slides` re-runs don't double-apply substitutions.
 
 ## Multilingual TTS
 

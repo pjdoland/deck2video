@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 
 from .assembler import assemble_video
@@ -22,6 +23,53 @@ from .tts import compile_pronunciations, generate_audio_for_slides, load_pronunc
 from .utils import check_ffmpeg, get_video_fps
 
 logger = logging.getLogger(__name__)
+
+# Minimum free disk space required before starting a render. A single
+# 10-min 1080p screencast .ts segment can be 150–300 MB, and concat
+# doubles peak usage briefly, so 5 GB is a realistic floor for typical decks.
+MIN_FREE_DISK_GB = 5.0
+
+# Flags whose value is only meaningful when the TTS phase actually runs.
+# Used by --reassemble to warn about ignored input.
+TTS_ONLY_FLAGS = {
+    "--voice", "--device", "--exaggeration", "--cfg-weight",
+    "--temperature", "--pronunciations", "--interactive", "-i",
+    "--language", "--hold-duration",
+}
+
+
+def _ranged_int(min_val: int, max_val: int, name: str):
+    """Return an argparse type-converter that enforces ``min_val <= v <= max_val``."""
+    def parse(value: str) -> int:
+        try:
+            n = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be an integer, got {value!r}"
+            ) from exc
+        if n < min_val or n > max_val:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be between {min_val} and {max_val}, got {n}"
+            )
+        return n
+    return parse
+
+
+def _ranged_float(min_val: float, max_val: float, name: str):
+    """Return an argparse type-converter that enforces ``min_val <= v <= max_val``."""
+    def parse(value: str) -> float:
+        try:
+            x = float(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be a number, got {value!r}"
+            ) from exc
+        if x < min_val or x > max_val:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be between {min_val} and {max_val}, got {x}"
+            )
+        return x
+    return parse
 
 
 def _discover_temp_files(temp_dir: Path) -> tuple[list[Path], list[Path]]:
@@ -59,27 +107,73 @@ def _discover_temp_files(temp_dir: Path) -> tuple[list[Path], list[Path]]:
 
 
 def _parse_slide_list(slide_list_str: str) -> list[int]:
-    """Parse a comma-separated list of slide numbers (1-based) into sorted ints."""
-    try:
-        indices = [int(s.strip()) for s in slide_list_str.split(",")]
-    except ValueError:
-        print(f"Error: invalid slide list '{slide_list_str}'. Use comma-separated numbers, e.g. 2,3,7",
-              file=sys.stderr)
+    """Parse a slide list (1-based) into sorted unique ints.
+
+    Accepts comma-separated numbers and inclusive ranges, e.g.
+    ``"2,5,7"`` → ``[2, 5, 7]`` and ``"2-5,8"`` → ``[2, 3, 4, 5, 8]``.
+    Warns on duplicates rather than dropping them silently.
+    """
+    indices: list[int] = []
+    for part in slide_list_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            try:
+                start_str, end_str = part.split("-", 1)
+                start_n = int(start_str)
+                end_n = int(end_str)
+            except ValueError:
+                print(
+                    f"Error: invalid range '{part}' in slide list. Use e.g. '2-5'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if end_n < start_n:
+                print(
+                    f"Error: descending range '{part}' is not allowed.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            indices.extend(range(start_n, end_n + 1))
+        else:
+            try:
+                indices.append(int(part))
+            except ValueError:
+                print(
+                    f"Error: invalid slide number '{part}'. "
+                    "Use comma-separated numbers and ranges, e.g. 2,3,7 or 2-5,8.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    if not indices:
+        print(f"Error: empty slide list '{slide_list_str}'.", file=sys.stderr)
         sys.exit(1)
     if any(i < 1 for i in indices):
         print("Error: slide numbers must be >= 1.", file=sys.stderr)
         sys.exit(1)
-    return sorted(set(indices))
+
+    deduped = sorted(set(indices))
+    if len(deduped) != len(indices):
+        dups = sorted(i for i, c in Counter(indices).items() if c > 1)
+        print(
+            f"  Note: duplicates removed from --redo-slides: {','.join(map(str, dups))}",
+            file=sys.stderr,
+        )
+    return deduped
 
 
 def _resolve_videos_and_fps(
     slides: list,
     input_path: Path,
     explicit_fps: int | None,
-) -> tuple[list[Path | None], int]:
+) -> tuple[list[Path | None], float]:
     """Resolve video paths from slides and auto-detect FPS.
 
-    Returns (video_paths, fps). Exits on path traversal or missing files.
+    Returns (video_paths, fps). FPS is a float so fractional rates like
+    29.97 are preserved end-to-end (truncating to int causes A/V drift).
+    Exits on path traversal or missing files.
     """
     input_dir = input_path.parent.resolve()
     video_paths: list[Path | None] = []
@@ -101,12 +195,12 @@ def _resolve_videos_and_fps(
             video_paths.append(None)
 
     if explicit_fps is not None:
-        fps = explicit_fps
+        fps: float = float(explicit_fps)
     else:
         screencast_fps = [
             get_video_fps(vp) for vp in video_paths if vp is not None
         ]
-        fps = int(max(screencast_fps)) if screencast_fps else 24
+        fps = max(screencast_fps) if screencast_fps else 24.0
     return video_paths, fps
 
 
@@ -136,7 +230,7 @@ def _write_manifest(steps: list, temp_dir: Path) -> None:
         for s in steps
     ]
     manifest_path = temp_dir / "steps.json"
-    with open(manifest_path, "w") as f:
+    with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2)
     logger.debug("Wrote manifest with %d steps to %s", len(entries), manifest_path)
 
@@ -146,7 +240,7 @@ def _read_manifest(temp_dir: Path) -> list[dict] | None:
     manifest_path = temp_dir / "steps.json"
     if not manifest_path.exists():
         return None
-    with open(manifest_path) as f:
+    with open(manifest_path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -230,23 +324,24 @@ def main() -> None:
                              "Loads ChatterboxMultilingualTTS instead of ChatterboxTTS.")
     parser.add_argument("--device", default="auto",
                         help="Torch device: auto, cpu, cuda, or mps (default: auto)")
-    parser.add_argument("--exaggeration", type=float, default=0.5,
-                        help="Chatterbox exaggeration level (default: 0.5)")
-    parser.add_argument("--cfg-weight", type=float, default=0.5,
-                        help="Chatterbox CFG weight (default: 0.5)")
-    parser.add_argument("--temperature", type=float, default=0.8,
-                        help="Chatterbox sampling temperature (default: 0.8)")
-    parser.add_argument("--hold-duration", type=float, default=3.0,
-                        help="Seconds to hold slides with no speaker notes (default: 3)")
-    parser.add_argument("--fps", type=int, default=None,
-                        help="Output framerate (default: auto-detected from screencasts, or 24)")
+    parser.add_argument("--exaggeration", type=_ranged_float(0.0, 2.0, "--exaggeration"), default=0.5,
+                        help="Chatterbox exaggeration level, 0.0–2.0 (default: 0.5)")
+    parser.add_argument("--cfg-weight", type=_ranged_float(0.0, 1.0, "--cfg-weight"), default=0.5,
+                        help="Chatterbox CFG weight, 0.0–1.0 (default: 0.5)")
+    parser.add_argument("--temperature", type=_ranged_float(0.0, 2.0, "--temperature"), default=0.8,
+                        help="Chatterbox sampling temperature, 0.0–2.0 (default: 0.8)")
+    parser.add_argument("--hold-duration", type=_ranged_float(0.1, 300.0, "--hold-duration"), default=3.0,
+                        help="Seconds to hold slides with no speaker notes, 0.1–300 (default: 3)")
+    parser.add_argument("--fps", type=_ranged_int(1, 120, "--fps"), default=None,
+                        help="Output framerate, 1–120 (default: auto-detected from screencasts, or 24)")
     parser.add_argument("--temp-dir", help="Where to write intermediate files (default: system temp)")
     parser.add_argument("--pronunciations",
                         help="Path to a JSON file mapping words to phonetic respellings")
-    parser.add_argument("--audio-padding", type=int, default=0,
-                        help="Milliseconds of silence before and after each slide's audio (default: 0)")
-    parser.add_argument("--with-clicks-audio-padding", type=int, default=0,
-                        help="Milliseconds of silence before and after each click-step's audio "
+    parser.add_argument("--audio-padding", type=_ranged_int(0, 60000, "--audio-padding"), default=0,
+                        help="Milliseconds of silence before and after each slide's audio, 0–60000 (default: 0)")
+    parser.add_argument("--with-clicks-audio-padding",
+                        type=_ranged_int(0, 60000, "--with-clicks-audio-padding"), default=0,
+                        help="Milliseconds of silence before and after each click-step's audio, 0–60000 "
                              "(default: 0; only applies when Slidev click animation steps are present)")
     parser.add_argument("--keep-temp", action="store_true",
                         help="Don't delete intermediate files after rendering")
@@ -263,8 +358,11 @@ def main() -> None:
                              help="Skip parse/render/TTS; assemble MP4 from existing temp dir files. "
                                   "Requires --temp-dir.")
     rerun_group.add_argument("--redo-slides", type=str, default=None, metavar="SLIDES",
-                             help="Regenerate TTS audio for the listed slides (e.g. 2,3,7), "
-                                  "then reassemble. Requires --temp-dir and the input .md file.")
+                             help="Regenerate TTS audio for the listed slides (e.g. 2,3,7 or 2-5,8), "
+                                  "then reassemble. Slide numbers are 1-based and refer to original "
+                                  "slides — for Slidev decks with click animations, all click steps "
+                                  "for a slide are regenerated together. Requires --temp-dir and the "
+                                  "input .md file.")
 
     args = parser.parse_args()
 
@@ -295,6 +393,19 @@ def main() -> None:
     # Pre-flight checks
     check_ffmpeg()
 
+    # Warn if TTS-only flags are passed alongside --reassemble (they're ignored).
+    # argparse accepts both `--voice foo` and `--voice=foo`; the latter lands
+    # in sys.argv as a single token so we strip the trailing `=value`.
+    if args.reassemble:
+        present = {tok.split("=", 1)[0] for tok in sys.argv}
+        ignored = sorted(TTS_ONLY_FLAGS & present)
+        if ignored:
+            print(
+                f"  Note: {', '.join(ignored)} ignored in --reassemble mode "
+                "(TTS phase is skipped).",
+                file=sys.stderr,
+            )
+
     # Set up temp directory
     if args.temp_dir:
         temp_dir = Path(args.temp_dir)
@@ -303,6 +414,16 @@ def main() -> None:
     else:
         temp_dir = Path(tempfile.mkdtemp(prefix="deck2video_"))
         user_temp = False
+
+    # Pre-flight: ensure enough free disk for intermediates and the final MP4
+    free_gb = shutil.disk_usage(temp_dir).free / (1024 ** 3)
+    if free_gb < MIN_FREE_DISK_GB:
+        print(
+            f"Error: only {free_gb:.2f} GB free in {temp_dir}; "
+            f"need at least {MIN_FREE_DISK_GB} GB for intermediates and output.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Configure logging to file in the temp directory
     log_path = temp_dir / "deck2video.log"
@@ -329,7 +450,7 @@ def main() -> None:
             # Expand Slidev slides to steps so video_paths length matches image count
             items = expand_slides_to_steps(slides) if fmt == "slidev" else slides
             video_paths, fps = _resolve_videos_and_fps(items, input_path, args.fps)
-            print(f"  Found {len(images)} slides, output framerate: {fps} fps")
+            print(f"  Found {len(images)} slides, output framerate: {fps:g} fps")
 
             print("[reassemble] Assembling video…")
             t0 = time.monotonic()
@@ -544,7 +665,7 @@ def main() -> None:
 
             # Resolve video paths and auto-detect FPS from screencasts
             video_paths, fps = _resolve_videos_and_fps(steps, input_path, args.fps)
-            print(f"  Output framerate: {fps} fps")
+            print(f"  Output framerate: {fps:g} fps")
 
             # Step 2: Render images
             print("[2/4] Rendering slide images…")
@@ -604,6 +725,10 @@ def main() -> None:
             if fmt == "slidev" and has_clicks:
                 logger.info("Done: %d slides (%d steps, %s), output=%s", len(slides), len(steps), ", ".join(parts), output_path)
                 print(f"\nDone! {len(slides)} slides ({len(steps)} steps) processed ({', '.join(parts)}).")
+                print(
+                    "  Tip: --redo-slides takes 1-based slide numbers (not step indices). "
+                    "Regenerating a slide redoes all of its click steps."
+                )
             else:
                 logger.info("Done: %d slides (%s), output=%s", len(slides), ", ".join(parts), output_path)
                 print(f"\nDone! {len(slides)} slides processed ({', '.join(parts)}).")
