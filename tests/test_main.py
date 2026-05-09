@@ -19,6 +19,13 @@ from deck2video.models import Slide, Step
 
 def _patch_pipeline(**overrides):
     """Return a dict of patches for all pipeline steps with sensible defaults."""
+    # 100 GB free — well above the disk-space preflight threshold so every
+    # test that goes through main() doesn't trip on the host's actual disk.
+    fake_usage = MagicMock()
+    fake_usage.free = 100 * 1024 ** 3
+    fake_usage.total = 200 * 1024 ** 3
+    fake_usage.used = 100 * 1024 ** 3
+
     defaults = {
         "deck2video.__main__.check_ffmpeg": MagicMock(),
         "deck2video.__main__.detect_format": MagicMock(return_value="marp"),
@@ -41,6 +48,7 @@ def _patch_pipeline(**overrides):
         ]),
         "deck2video.__main__.assemble_video": MagicMock(),
         "deck2video.__main__.get_video_fps": MagicMock(return_value=30.0),
+        "deck2video.__main__.shutil.disk_usage": MagicMock(return_value=fake_usage),
     }
     defaults.update(overrides)
     return defaults
@@ -718,6 +726,157 @@ class TestParseSlideList:
     def test_zero_index_exits(self):
         with pytest.raises(SystemExit):
             _parse_slide_list("0,1,2")
+
+    # B32 — range syntax + duplicate warnings
+    def test_simple_range(self):
+        assert _parse_slide_list("2-5") == [2, 3, 4, 5]
+
+    def test_mixed_singles_and_range(self):
+        assert _parse_slide_list("2-5,8") == [2, 3, 4, 5, 8]
+
+    def test_range_with_overlap_dedupes(self):
+        assert _parse_slide_list("1-3,2-4") == [1, 2, 3, 4]
+
+    def test_single_value_range(self):
+        assert _parse_slide_list("5-5") == [5]
+
+    def test_descending_range_exits(self):
+        with pytest.raises(SystemExit):
+            _parse_slide_list("5-3")
+
+    def test_invalid_range_exits(self):
+        with pytest.raises(SystemExit):
+            _parse_slide_list("a-5")
+
+    def test_empty_string_exits(self):
+        with pytest.raises(SystemExit):
+            _parse_slide_list(",,")
+
+    def test_whitespace_around_parts(self):
+        assert _parse_slide_list(" 2 , 3 - 5 , 8 ") == [2, 3, 4, 5, 8]
+
+    def test_warns_on_duplicates(self, capsys):
+        # Should still succeed but print a note to stderr.
+        result = _parse_slide_list("2,2,3")
+        assert result == [2, 3]
+        captured = capsys.readouterr()
+        assert "duplicates removed" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# E28 — argparse range validators
+# ---------------------------------------------------------------------------
+
+class TestRangedValidators:
+    def test_ranged_int_accepts_in_range(self):
+        from deck2video.__main__ import _ranged_int
+        v = _ranged_int(0, 100, "--x")("50")
+        assert v == 50
+
+    def test_ranged_int_rejects_out_of_range(self):
+        import argparse as _argparse
+        from deck2video.__main__ import _ranged_int
+        with pytest.raises(_argparse.ArgumentTypeError, match="between 0 and 100"):
+            _ranged_int(0, 100, "--x")("999")
+
+    def test_ranged_int_rejects_non_int(self):
+        import argparse as _argparse
+        from deck2video.__main__ import _ranged_int
+        with pytest.raises(_argparse.ArgumentTypeError, match="must be an integer"):
+            _ranged_int(0, 100, "--x")("abc")
+
+    def test_ranged_float_accepts_in_range(self):
+        from deck2video.__main__ import _ranged_float
+        assert _ranged_float(0.0, 2.0, "--x")("1.5") == 1.5
+
+    def test_ranged_float_rejects_out_of_range(self):
+        import argparse as _argparse
+        from deck2video.__main__ import _ranged_float
+        with pytest.raises(_argparse.ArgumentTypeError, match="between 0.0 and 2.0"):
+            _ranged_float(0.0, 2.0, "--x")("99")
+
+    def test_negative_padding_rejected_via_argparse(self, tmp_path):
+        """End-to-end: --audio-padding -1 must not slip through argparse."""
+        from deck2video.__main__ import main
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+        with patch("sys.argv", ["deck2video", str(md), "--audio-padding", "-1"]):
+            with pytest.raises(SystemExit):
+                main()
+
+    def test_huge_hold_duration_rejected(self, tmp_path):
+        """--hold-duration 1e9 must be rejected before allocating a multi-GB WAV."""
+        from deck2video.__main__ import main
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+        with patch("sys.argv", ["deck2video", str(md), "--hold-duration", "1e9"]):
+            with pytest.raises(SystemExit):
+                main()
+
+
+# ---------------------------------------------------------------------------
+# B12 — disk-space preflight
+# ---------------------------------------------------------------------------
+
+class TestDiskSpacePreflight:
+    def test_low_disk_aborts(self, tmp_path):
+        """If shutil.disk_usage reports less than the threshold, exit cleanly."""
+        from deck2video.__main__ import main
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+
+        class FakeUsage:
+            def __init__(self, free):
+                self.free = free
+            total = 100 * 1024 ** 3
+            used = 0
+
+        # 0.1 GB free — well under MIN_FREE_DISK_GB=1.0
+        with patch("deck2video.__main__.shutil.disk_usage", return_value=FakeUsage(int(0.1 * 1024 ** 3))):
+            with patch("sys.argv", ["deck2video", str(md)]):
+                with patch("deck2video.__main__.check_ffmpeg"):
+                    with pytest.raises(SystemExit):
+                        main()
+
+
+# ---------------------------------------------------------------------------
+# B31 — --reassemble warns when ignored TTS-only flags are passed
+# ---------------------------------------------------------------------------
+
+class TestReassembleIgnoresTtsFlags:
+    def test_voice_warning_emitted(self, tmp_path, capsys):
+        """Passing --voice with --reassemble prints a 'note: ignored' to stderr."""
+        from deck2video.__main__ import main
+
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        # Make _discover_temp_files happy by creating placeholder files.
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        slides = [
+            Slide(index=1, body="b", notes="x", video=None),
+            Slide(index=2, body="b", notes="y", video=None),
+        ]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_marp": MagicMock(return_value=slides),
+        })
+
+        # We just want to exercise the warning code; everything else is mocked.
+        import contextlib
+        with patch("sys.argv", ["deck2video", str(md),
+                                 "--reassemble", "--temp-dir", str(temp),
+                                 "--voice", "/tmp/v.wav"]):
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                main()
+        captured = capsys.readouterr()
+        assert "--voice" in captured.err
+        assert "ignored" in captured.err.lower()
 
 
 # ---------------------------------------------------------------------------

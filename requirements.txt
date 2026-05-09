@@ -1,4 +1,6 @@
-chatterbox-tts
-torch
-torchaudio
-python-frontmatter
+# Pinned to last-tested versions for reproducible installs.
+# To refresh: bump these numbers, run setup.sh, run tests, commit.
+chatterbox-tts==0.1.6
+torch==2.6.0
+torchaudio==2.6.0
+python-frontmatter==1.1.0

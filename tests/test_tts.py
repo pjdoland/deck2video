@@ -47,6 +47,33 @@ class TestLoadPronunciations:
         with pytest.raises(json.JSONDecodeError):
             load_pronunciations(p)
 
+    def test_rejects_non_string_value(self, tmp_path):
+        """Non-string values are rejected at load time, not later in regex compile."""
+        p = tmp_path / "bad.json"
+        p.write_text(json.dumps({"kubectl": 42}))
+        with pytest.raises(ValueError, match="must be a string"):
+            load_pronunciations(p)
+
+    def test_rejects_empty_key(self, tmp_path):
+        p = tmp_path / "empty_key.json"
+        p.write_text(json.dumps({"": "something"}))
+        with pytest.raises(ValueError, match="must not be empty"):
+            load_pronunciations(p)
+
+    def test_caps_total_entry_count(self, tmp_path):
+        p = tmp_path / "huge.json"
+        # 1001 entries — over the cap.
+        big = {f"k{i}": f"v{i}" for i in range(1001)}
+        p.write_text(json.dumps(big))
+        with pytest.raises(ValueError, match="max 1000"):
+            load_pronunciations(p)
+
+    def test_caps_field_length(self, tmp_path):
+        p = tmp_path / "long.json"
+        p.write_text(json.dumps({"x" * 300: "ok"}))
+        with pytest.raises(ValueError, match="too long"):
+            load_pronunciations(p)
+
 
 # ---------------------------------------------------------------------------
 # apply_pronunciations
@@ -864,3 +891,72 @@ class TestGenerateAudioForSteps:
 
         prompt = mock_input.call_args[0][0]
         assert "Slide 3 click 2" in prompt
+
+
+# ---------------------------------------------------------------------------
+# _seed_for_slide (E46) — per-step deterministic seed
+# ---------------------------------------------------------------------------
+
+class TestSeedForSlide:
+    def test_marp_slide_uses_index(self):
+        from deck2video.models import Slide
+        from deck2video.tts import _seed_for_slide
+        s = Slide(index=7, body="b", notes=None)
+        # Bit-shift encoding: (7 << 16) | 0
+        assert _seed_for_slide(s) == 7 << 16
+
+    def test_step_mixes_slide_and_click(self):
+        from deck2video.models import Step
+        from deck2video.tts import _seed_for_slide
+        s = Step(index=12, slide_index=3, click=2, notes=None)
+        # (3 << 16) | 2
+        assert _seed_for_slide(s) == (3 << 16) | 2
+
+    def test_distinct_steps_get_distinct_seeds(self):
+        """Two different click steps of the same slide must seed differently."""
+        from deck2video.models import Step
+        from deck2video.tts import _seed_for_slide
+        s1 = Step(index=1, slide_index=5, click=0, notes=None)
+        s2 = Step(index=2, slide_index=5, click=1, notes=None)
+        assert _seed_for_slide(s1) != _seed_for_slide(s2)
+
+    def test_slide_2_click_0_does_not_collide_with_slide_1_click_high(self):
+        """Bit-shift encoding ensures (s, c) is unambiguous, not (s*1000 + c)."""
+        from deck2video.models import Step
+        from deck2video.tts import _seed_for_slide
+        s_a = Step(index=1, slide_index=2, click=0, notes=None)
+        s_b = Step(index=2, slide_index=1, click=1000, notes=None)
+        assert _seed_for_slide(s_a) != _seed_for_slide(s_b)
+
+
+# ---------------------------------------------------------------------------
+# B01 — generate_audio_for_slides must NOT mutate slide.notes in place
+# ---------------------------------------------------------------------------
+
+class TestNoMutateSlideNotes:
+    def test_pronunciations_do_not_mutate_input(self, tmp_path):
+        """A second pass through the same slide must still see the original notes,
+        otherwise pronunciations get applied twice and corrupt the audio.
+        """
+        from deck2video.models import Slide
+        from deck2video.tts import compile_pronunciations, generate_audio_for_slides
+
+        slide = Slide(index=1, body="b", notes="Hello kubectl world.")
+        patterns = compile_pronunciations({"kubectl": "cube control"})
+
+        mock_torch = MagicMock()
+        mock_torch.backends.mps.is_available.return_value = False
+        mock_torch.cuda.is_available.return_value = False
+        mock_torchaudio = MagicMock()
+
+        with patch.dict("sys.modules", {"torch": mock_torch, "torchaudio": mock_torchaudio}):
+            with patch("deck2video.tts._load_model"), \
+                 patch("deck2video.tts._generate_slide_audio",
+                       return_value=(MagicMock(), 24000, 1, 1)):
+                generate_audio_for_slides(
+                    [slide], temp_dir=tmp_path, voice_path=None,
+                    hold_duration=1.0, pronunciations=patterns,
+                )
+
+        # The dataclass field must be untouched so a retry sees the original.
+        assert slide.notes == "Hello kubectl world."
