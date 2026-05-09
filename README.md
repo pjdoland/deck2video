@@ -154,12 +154,13 @@ python -m deck2video <input.md> [options]
 | `--fps` | `auto` | Output framerate (auto-detected from screencasts, or 24) |
 | `--temp-dir` | system temp | Directory for intermediate files |
 | `--pronunciations` | none | JSON file mapping words to phonetic respellings |
-| `--audio-padding` | `0` | Milliseconds of silence before and after each slide's audio |
+| `--audio-padding` | `0` | Milliseconds of silence before and after each slide's audio (0–60000) |
+| `--with-clicks-audio-padding` | `0` | Milliseconds of silence around each click-step's audio (Slidev only, 0–60000) |
 | `--interactive`, `-i` | off | Review and approve each slide's TTS audio before continuing |
 | `--keep-temp` | off | Preserve intermediate files after rendering |
 | `--dark` | off | Render Slidev slides in dark mode (passes `--dark` to `slidev export`) |
 | `--reassemble` | off | Skip parse/render/TTS; assemble MP4 from existing temp dir files |
-| `--redo-slides` | none | Regenerate TTS for listed slides (e.g. `2,3,7`), then reassemble |
+| `--redo-slides` | none | Regenerate TTS for listed slides (e.g. `2,3,7` or `2-5,8`), then reassemble |
 
 ### Examples
 
@@ -192,8 +193,8 @@ python -m deck2video slidev-deck.md --format slidev --voice voice.wav
 # Reassemble video from existing temp dir (no re-render or TTS)
 python -m deck2video deck.md --reassemble --temp-dir ./build
 
-# Redo TTS for specific slides and reassemble
-python -m deck2video deck.md --redo-slides 2,5,7 --temp-dir ./build --voice voice.wav
+# Redo TTS for specific slides and reassemble (singles, ranges, or both)
+python -m deck2video deck.md --redo-slides 2-5,8 --temp-dir ./build --voice voice.wav
 ```
 
 ## Interactive Mode
@@ -228,16 +229,19 @@ python -m deck2video deck.md --reassemble --temp-dir ./build
 This skips parsing, rendering, and TTS entirely. It picks up the existing
 slide images and audio WAVs in the temp directory and assembles a new MP4.
 
-**Redo specific slides** (e.g., slides 2 and 5 had bad TTS):
+**Redo specific slides** (e.g., slides 2 through 5 plus slide 8 had bad TTS):
 
 ```bash
-python -m deck2video deck.md --redo-slides 2,5 --temp-dir ./build --voice voice.wav
+python -m deck2video deck.md --redo-slides 2-5,8 --temp-dir ./build --voice voice.wav
 ```
 
 This re-parses the markdown to get the current speaker notes, regenerates TTS
 audio for only the listed slides, then reassembles the full video. Slide
-numbers are 1-based original slide numbers. For Slidev decks with click
+numbers are 1-based original slide numbers and accept singles, ranges, or
+both (`2,5,7` or `2-5,8` or `1-3,7,10-12`). For Slidev decks with click
 animations, all click steps for the specified slide are regenerated together.
+Regeneration is deterministic per slide/click — re-running with the same
+notes and TTS settings produces bit-identical audio.
 
 Both flags require `--temp-dir` pointing to a directory from a previous run.
 They are mutually exclusive (you can't use both at once).

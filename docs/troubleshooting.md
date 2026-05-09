@@ -115,6 +115,27 @@ This means the parser (or step expansion) found a different number of steps than
 - Rewrite the speaker notes to be simpler and more conversational.
 - Break long notes into shorter sentences.
 
+## "Only X.YZ GB free in /tmp/...; need at least 5.0 GB"
+
+The pipeline performs a disk-space preflight before starting and aborts if `/tmp` (or your `--temp-dir`) has less than 5 GB free. A typical render produces hundreds of MB of intermediate `.ts` segments plus the final MP4, and concat doubles peak usage briefly.
+
+**Fix:** free up space in `/tmp` (or wherever your temp dir lives), or pass `--temp-dir` pointing at a partition with more headroom.
+
+## "ffmpeg / ffprobe / marp-cli / slidev export timed out after Ns"
+
+Every external command has a timeout (30s for ffprobe, 120s for ffmpeg concat, 600s for ffmpeg segment encoding and marp/slidev rendering). When a timeout fires you get a clean error rather than an indefinite hang.
+
+**Common causes:**
+- Slidev/marp render of a very large deck — increase the timeout in `deck2video/slidev_renderer.py` (`RENDER_TIMEOUT_S`) or split the deck.
+- A wedged Chromium process from a previous interrupted run — check for orphan `chrome` / `chromium` processes and kill them.
+- A hung ffmpeg encode on a malformed input — re-run with `--keep-temp` and inspect the offending segment.
+
+## "Concat segments are not bit-identical"
+
+Before concatenating, deck2video runs `ffprobe` on every segment and verifies that pixel format, codec, frame rate, dimensions, and audio channel count/sample rate all match. A mismatch would cause silent A/V drift in the output, so the pipeline aborts with a list of mismatched fields per segment.
+
+**Common cause:** mixing image-loop slides with screencast slides whose codec parameters differ. Check the `Mismatches:` list in the error message; the field that disagrees points at what to normalize. Until segment normalization lands as a separate change (see ROADMAP B40), you may need to re-encode the screencast to match (e.g. force `yuv420p` and 48 kHz AAC).
+
 ## GPU out-of-memory errors
 
 ```

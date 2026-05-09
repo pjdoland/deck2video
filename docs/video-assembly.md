@@ -15,14 +15,17 @@ For slides without a `<!-- video: ... -->` directive, the rendered PNG is looped
 ffmpeg -loop 1 -framerate {fps} -i slide.png -i audio.wav \
   -t {duration} -c:v libx264 -tune stillimage -pix_fmt yuv420p \
   -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2" \
-  -c:a aac -b:a 192k -shortest -f mpegts segment.ts
+  -c:a aac -b:a 192k [-af "adelay=...,apad=whole_dur=..."] -f mpegts segment.ts
 ```
 
 Key details:
 
 - The image is encoded as H.264 video with the `stillimage` tune (optimized for static content).
-- Duration matches the audio file length (plus any padding).
+- Duration is rounded up to the nearest whole frame at the chosen `fps` so segment boundaries land on frame edges (prevents A/V drift compounding across many slides).
+- When `--audio-padding` is set, `apad=whole_dur=…` extends the audio to exactly the segment duration so the trailing pad isn't clipped. (Older versions used `-shortest`, which silently truncated the trailing pad.)
 - Output is MPEG-TS format for seamless concatenation.
+
+Before concatenation, deck2video runs `ffprobe` on every segment and verifies that pixel format, codec, frame rate, dimensions, and audio channel count/sample rate all match. A mismatch aborts the run with a list of mismatched fields per segment — concatenating mismatched segments with `-c copy` would silently A/V-drift the output.
 
 ## Screencast segments
 
@@ -77,6 +80,8 @@ The padding is applied as an ffmpeg audio delay filter (`adelay`), not by modify
 ### Auto-detection
 
 When screencasts are present, the output framerate is automatically set to the highest framerate found among all embedded videos. This is determined by querying each video with ffprobe.
+
+Fractional rates from screencasts (e.g. `30000/1001` = 29.97) are preserved end-to-end as floats and passed to ffmpeg with six decimal digits of precision. Older versions truncated to int (29.97 → 29), causing cumulative A/V drift over long videos.
 
 When no screencasts are present, the default framerate is **24 fps**.
 
