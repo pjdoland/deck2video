@@ -296,16 +296,24 @@ python -m deck2video deck.md \
 afplay ./build/audio_003.wav   # sounds bad
 afplay ./build/audio_006.wav   # also bad
 
-# Redo just those slides
+# Redo just those slides (single numbers, ranges, or both)
 python -m deck2video deck.md \
     --redo-slides 3,6 \
     --temp-dir ./build \
     --voice voice.wav \
     --output talk.mp4
+
+# Or redo a contiguous range plus an individual slide:
+python -m deck2video deck.md \
+    --redo-slides 3-6,10 \
+    --temp-dir ./build \
+    --voice voice.wav
 ```
 
-This re-parses the markdown, regenerates audio for slides 3 and 6 only, then
+This re-parses the markdown, regenerates audio for the listed slides only, then
 reassembles the full video. All other slides keep their existing audio.
+Regeneration is deterministic per slide/click — re-running with the same notes
+and TTS settings produces bit-identical audio.
 
 ## Reassemble after manual edits
 
