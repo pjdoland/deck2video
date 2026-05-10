@@ -815,6 +815,59 @@ class TestRangedValidators:
 
 
 # ---------------------------------------------------------------------------
+# E13 — --max-slides + input size cap
+# ---------------------------------------------------------------------------
+
+class TestMaxSlides:
+    """E13 — refuse to render decks larger than --max-slides."""
+
+    def test_under_limit_proceeds(self, tmp_path):
+        from deck2video.__main__ import main
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide 1\n")
+        # Default max is 500; 2 slides is well under.
+        patches = _patch_pipeline()
+        with patch("sys.argv", ["deck2video", str(md)]):
+            import contextlib
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                main()  # no SystemExit
+
+    def test_over_limit_aborts(self, tmp_path, capsys):
+        from deck2video.__main__ import main
+        from deck2video.models import Slide
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+        # 6 slides with --max-slides=3 → must abort.
+        slides = [Slide(index=i, body="b", notes=None, video=None) for i in range(1, 7)]
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.parse_marp": MagicMock(return_value=slides),
+        })
+        with patch("sys.argv", ["deck2video", str(md), "--max-slides", "3"]):
+            import contextlib
+            with contextlib.ExitStack() as stack:
+                for target, mock_obj in patches.items():
+                    stack.enter_context(patch(target, mock_obj))
+                with pytest.raises(SystemExit):
+                    main()
+        captured = capsys.readouterr()
+        assert "max-slides" in captured.err
+
+    def test_oversized_input_file_aborts(self, tmp_path, capsys):
+        """E13 — markdown larger than MAX_INPUT_BYTES is rejected before parse."""
+        from deck2video.__main__ import MAX_INPUT_BYTES, main
+        md = tmp_path / "huge.md"
+        # MAX_INPUT_BYTES + 1 byte
+        md.write_bytes(b"# Slide\n" + b"a" * MAX_INPUT_BYTES)
+        with patch("sys.argv", ["deck2video", str(md)]):
+            with pytest.raises(SystemExit):
+                main()
+        captured = capsys.readouterr()
+        assert "max supported size" in captured.err.lower()
+
+
+# ---------------------------------------------------------------------------
 # B12 — disk-space preflight
 # ---------------------------------------------------------------------------
 

@@ -53,7 +53,7 @@ class TestRenderSlides:
         mock_result.returncode = 0
 
         with patch("deck2video.marp_renderer.shutil.which", side_effect=which):
-            with patch("deck2video.marp_renderer.subprocess.run", return_value=mock_result) as mock_run:
+            with patch("deck2video.marp_renderer.process.run", return_value=mock_result) as mock_run:
                 render_slides("/tmp/deck.md", tmp_path, expected_count=3)
                 cmd = mock_run.call_args[0][0]
                 assert cmd[0] == "marp"
@@ -70,7 +70,7 @@ class TestRenderSlides:
         mock_result.returncode = 0
 
         with patch("deck2video.marp_renderer.shutil.which", side_effect=which):
-            with patch("deck2video.marp_renderer.subprocess.run", return_value=mock_result) as mock_run:
+            with patch("deck2video.marp_renderer.process.run", return_value=mock_result) as mock_run:
                 render_slides("/tmp/deck.md", tmp_path, expected_count=2)
                 cmd = mock_run.call_args[0][0]
                 assert cmd[0] == "npx"
@@ -83,7 +83,7 @@ class TestRenderSlides:
         mock_result.returncode = 0
 
         with patch("deck2video.marp_renderer.shutil.which", return_value="/usr/bin/marp"):
-            with patch("deck2video.marp_renderer.subprocess.run", return_value=mock_result):
+            with patch("deck2video.marp_renderer.process.run", return_value=mock_result):
                 images = render_slides("/tmp/deck.md", tmp_path, expected_count=3)
 
         assert len(images) == 3
@@ -97,7 +97,7 @@ class TestRenderSlides:
         mock_result.stderr = "marp error"
 
         with patch("deck2video.marp_renderer.shutil.which", return_value="/usr/bin/marp"):
-            with patch("deck2video.marp_renderer.subprocess.run", return_value=mock_result):
+            with patch("deck2video.marp_renderer.process.run", return_value=mock_result):
                 with pytest.raises(RuntimeError, match="marp-cli exited"):
                     render_slides("/tmp/deck.md", tmp_path, expected_count=3)
 
@@ -108,7 +108,7 @@ class TestRenderSlides:
         mock_result.returncode = 0
 
         with patch("deck2video.marp_renderer.shutil.which", return_value="/usr/bin/marp"):
-            with patch("deck2video.marp_renderer.subprocess.run", return_value=mock_result):
+            with patch("deck2video.marp_renderer.process.run", return_value=mock_result):
                 with pytest.raises(SystemExit):
                     render_slides("/tmp/deck.md", tmp_path, expected_count=3)
 
@@ -118,7 +118,7 @@ class TestRenderSlides:
         mock_result.returncode = 0
 
         with patch("deck2video.marp_renderer.shutil.which", return_value="/usr/bin/marp"):
-            with patch("deck2video.marp_renderer.subprocess.run", return_value=mock_result) as mock_run:
+            with patch("deck2video.marp_renderer.process.run", return_value=mock_result) as mock_run:
                 render_slides("/tmp/deck.md", tmp_path, expected_count=1)
                 cmd = mock_run.call_args[0][0]
                 assert "--images" in cmd
