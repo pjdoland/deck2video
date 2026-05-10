@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import process
+
 logger = logging.getLogger(__name__)
 
 # Slidev export spins up a full Chromium; allow a generous budget.
@@ -82,7 +84,7 @@ def render_slidev_slides(
     logger.debug("slidev command: %s", " ".join(cmd))
     print(f"  Running: {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True, timeout=RENDER_TIMEOUT_S)
+        result = process.run(cmd, stderr=subprocess.PIPE, text=True, timeout=RENDER_TIMEOUT_S)
     except subprocess.TimeoutExpired as exc:
         print(
             f"Error: slidev export timed out after {RENDER_TIMEOUT_S}s. "

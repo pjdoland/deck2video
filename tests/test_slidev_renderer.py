@@ -41,7 +41,7 @@ class TestRenderSlidevSlides:
         self._setup_pngs(tmp_path, 2)
 
         with patch("shutil.which", side_effect=lambda x: "/usr/bin/slidev" if x == "slidev" else None):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
                 result = render_slidev_slides("deck.md", tmp_path, expected_count=2)
 
         cmd = mock_run.call_args[0][0]
@@ -60,7 +60,7 @@ class TestRenderSlidevSlides:
             return None
 
         with patch("shutil.which", side_effect=which_mock):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 with patch("deck2video.slidev_renderer.check_slidev_cli"):
                     result = render_slidev_slides("deck.md", tmp_path, expected_count=1)
 
@@ -68,7 +68,7 @@ class TestRenderSlidevSlides:
 
     def test_raises_on_nonzero_exit(self, tmp_path):
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="", stderr="error")):
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=1, stdout="", stderr="error")):
                 with pytest.raises(RuntimeError, match="exited with code 1"):
                     render_slidev_slides("deck.md", tmp_path, expected_count=1)
 
@@ -77,7 +77,7 @@ class TestRenderSlidevSlides:
         self._setup_pngs(tmp_path, 1)
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 with pytest.raises(SystemExit):
                     render_slidev_slides("deck.md", tmp_path, expected_count=3)
 
@@ -90,7 +90,7 @@ class TestRenderSlidevSlides:
         (slides_dir / "2.png").touch()
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 result = render_slidev_slides("deck.md", tmp_path, expected_count=3)
 
         assert result[0].name == "1.png"
@@ -106,7 +106,7 @@ class TestRenderSlidevSlides:
         (slides_dir / "2-1.png").touch()
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
                 result = render_slidev_slides("deck.md", tmp_path, expected_count=3, with_clicks=True)
 
         cmd = mock_run.call_args[0][0]
@@ -118,7 +118,7 @@ class TestRenderSlidevSlides:
         self._setup_pngs(tmp_path, 2)
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
                 render_slidev_slides("deck.md", tmp_path, expected_count=2)
 
         cmd = mock_run.call_args[0][0]
@@ -129,7 +129,7 @@ class TestRenderSlidevSlides:
         self._setup_pngs(tmp_path, 2)
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
                 render_slidev_slides("deck.md", tmp_path, expected_count=2, dark=True)
 
         cmd = mock_run.call_args[0][0]
@@ -140,7 +140,7 @@ class TestRenderSlidevSlides:
         self._setup_pngs(tmp_path, 2)
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_run:
                 render_slidev_slides("deck.md", tmp_path, expected_count=2)
 
         cmd = mock_run.call_args[0][0]
@@ -155,7 +155,7 @@ class TestRenderSlidevSlides:
             (slides_dir / name).touch()
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 result = render_slidev_slides("deck.md", tmp_path, expected_count=5, with_clicks=True)
 
         names = [p.name for p in result]
@@ -170,7 +170,7 @@ class TestRenderSlidevSlides:
         (slides_dir / "2.png").touch()
 
         with patch("shutil.which", return_value="/usr/bin/slidev"):
-            with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+            with patch("deck2video.slidev_renderer.process.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
                 with pytest.raises(SystemExit):
                     render_slidev_slides("deck.md", tmp_path, expected_count=4, with_clicks=True)
 

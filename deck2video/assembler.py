@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import process
 from .utils import FFPROBE_TIMEOUT_S, get_audio_duration, get_video_duration
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def _make_segment(
     ]
     logger.debug("Segment %d command: %s", index, " ".join(cmd))
     try:
-        result = subprocess.run(
+        result = process.run(
             cmd, capture_output=True, text=True, timeout=FFMPEG_SEGMENT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as exc:
@@ -152,7 +153,7 @@ def _make_video_segment(
     ]
     logger.debug("Video segment %d command: %s", index, " ".join(cmd))
     try:
-        result = subprocess.run(
+        result = process.run(
             cmd, capture_output=True, text=True, timeout=FFMPEG_SEGMENT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as exc:
@@ -170,7 +171,7 @@ def _make_video_segment(
 def _probe_segment_streams(segment: Path) -> dict:
     """Return the parsed ffprobe stream info for a segment."""
     try:
-        result = subprocess.run(
+        result = process.run(
             [
                 "ffprobe",
                 "-v", "quiet",
@@ -311,7 +312,7 @@ def assemble_video(
     logger.debug("Concat command: %s", " ".join(cmd))
     print(f"  Concatenating {len(segments)} segments…")
     try:
-        result = subprocess.run(
+        result = process.run(
             cmd, capture_output=True, text=True, timeout=FFMPEG_CONCAT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired as exc:

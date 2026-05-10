@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import process
+
 logger = logging.getLogger(__name__)
 
 # Generous: Chromium startup + rendering many slides can take a while.
@@ -55,7 +57,7 @@ def render_slides(input_md: str, temp_dir: Path, expected_count: int) -> list[Pa
     logger.debug("marp-cli command: %s", " ".join(cmd))
     print(f"  Running: {' '.join(cmd)}")
     try:
-        result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True, timeout=RENDER_TIMEOUT_S)
+        result = process.run(cmd, stderr=subprocess.PIPE, text=True, timeout=RENDER_TIMEOUT_S)
     except subprocess.TimeoutExpired as exc:
         print(
             f"Error: marp-cli timed out after {RENDER_TIMEOUT_S}s. "
