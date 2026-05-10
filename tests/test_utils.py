@@ -143,7 +143,7 @@ def _mock_ffprobe_result(duration_str: str):
 
 class TestGetAudioDuration:
     def test_returns_duration(self, tmp_path):
-        with patch("deck2video.utils.subprocess.run", return_value=_mock_ffprobe_result("3.456")):
+        with patch("deck2video.utils.process.run", return_value=_mock_ffprobe_result("3.456")):
             d = get_audio_duration(tmp_path / "audio.wav")
             assert d == pytest.approx(3.456)
 
@@ -151,14 +151,14 @@ class TestGetAudioDuration:
         result = MagicMock()
         result.returncode = 1
         result.stderr = "error"
-        with patch("deck2video.utils.subprocess.run", return_value=result):
+        with patch("deck2video.utils.process.run", return_value=result):
             with pytest.raises(RuntimeError, match="ffprobe failed"):
                 get_audio_duration(tmp_path / "audio.wav")
 
 
 class TestGetVideoDuration:
     def test_returns_duration(self, tmp_path):
-        with patch("deck2video.utils.subprocess.run", return_value=_mock_ffprobe_result("12.5")):
+        with patch("deck2video.utils.process.run", return_value=_mock_ffprobe_result("12.5")):
             d = get_video_duration(tmp_path / "video.mp4")
             assert d == pytest.approx(12.5)
 
@@ -177,26 +177,26 @@ class TestGetVideoFps:
         return result
 
     def test_integer_fps(self, tmp_path):
-        with patch("deck2video.utils.subprocess.run", return_value=self._mock_fps_result("30/1")):
+        with patch("deck2video.utils.process.run", return_value=self._mock_fps_result("30/1")):
             assert get_video_fps(tmp_path / "v.mp4") == pytest.approx(30.0)
 
     def test_fractional_fps(self, tmp_path):
-        with patch("deck2video.utils.subprocess.run", return_value=self._mock_fps_result("30000/1001")):
+        with patch("deck2video.utils.process.run", return_value=self._mock_fps_result("30000/1001")):
             assert get_video_fps(tmp_path / "v.mp4") == pytest.approx(29.97, rel=1e-2)
 
     def test_24fps(self, tmp_path):
-        with patch("deck2video.utils.subprocess.run", return_value=self._mock_fps_result("24/1")):
+        with patch("deck2video.utils.process.run", return_value=self._mock_fps_result("24/1")):
             assert get_video_fps(tmp_path / "v.mp4") == pytest.approx(24.0)
 
     def test_60fps(self, tmp_path):
-        with patch("deck2video.utils.subprocess.run", return_value=self._mock_fps_result("60/1")):
+        with patch("deck2video.utils.process.run", return_value=self._mock_fps_result("60/1")):
             assert get_video_fps(tmp_path / "v.mp4") == pytest.approx(60.0)
 
     def test_ffprobe_failure_raises(self, tmp_path):
         result = MagicMock()
         result.returncode = 1
         result.stderr = "no such file"
-        with patch("deck2video.utils.subprocess.run", return_value=result):
+        with patch("deck2video.utils.process.run", return_value=result):
             with pytest.raises(RuntimeError, match="ffprobe failed"):
                 get_video_fps(tmp_path / "v.mp4")
 
@@ -206,14 +206,14 @@ class TestGetVideoFps:
         result.returncode = 0
         result.stdout = json.dumps({"streams": []})
         result.stderr = ""
-        with patch("deck2video.utils.subprocess.run", return_value=result):
+        with patch("deck2video.utils.process.run", return_value=result):
             with pytest.raises(RuntimeError, match="No video stream"):
                 get_video_fps(tmp_path / "audio.m4a")
 
     def test_zero_denominator_raises_clean_error(self, tmp_path):
         """A 0/0 frame rate (legal in malformed video) must not become ZeroDivisionError."""
         with patch(
-            "deck2video.utils.subprocess.run",
+            "deck2video.utils.process.run",
             return_value=self._mock_fps_result("0/0"),
         ):
             with pytest.raises(RuntimeError, match="zero-denominator"):
@@ -222,7 +222,7 @@ class TestGetVideoFps:
     def test_malformed_rate_string_raises_clean_error(self, tmp_path):
         """A frame rate without a slash must not be a confusing unpacking error."""
         with patch(
-            "deck2video.utils.subprocess.run",
+            "deck2video.utils.process.run",
             return_value=self._mock_fps_result("not-a-fraction"),
         ):
             with pytest.raises(RuntimeError, match="frame rate"):
@@ -241,7 +241,7 @@ class TestGetAudioDurationWav:
         wav = tmp_path / "audio.wav"
         # Generate a real silent WAV — its duration is exact.
         generate_silent_wav(wav, duration=2.5, sample_rate=24000)
-        with patch("deck2video.utils.subprocess.run") as mock_run:
+        with patch("deck2video.utils.process.run") as mock_run:
             d = get_audio_duration(wav)
         assert d == pytest.approx(2.5, abs=1e-6)
         mock_run.assert_not_called()  # Did NOT touch ffprobe
@@ -251,7 +251,7 @@ class TestGetAudioDurationWav:
         m4a = tmp_path / "audio.m4a"
         m4a.write_bytes(b"fake")
         with patch(
-            "deck2video.utils.subprocess.run",
+            "deck2video.utils.process.run",
             return_value=_mock_ffprobe_result("3.456"),
         ) as mock_run:
             d = get_audio_duration(m4a)
@@ -263,7 +263,7 @@ class TestGetAudioDurationWav:
         wav = tmp_path / "fake.wav"
         wav.write_bytes(b"not a riff")
         with patch(
-            "deck2video.utils.subprocess.run",
+            "deck2video.utils.process.run",
             return_value=_mock_ffprobe_result("1.0"),
         ) as mock_run:
             d = get_audio_duration(wav)

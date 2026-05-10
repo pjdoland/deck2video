@@ -78,6 +78,16 @@ After setup completes, you can run deck2video directly:
 python -m deck2video presentation.md --voice voice-sample.wav
 ```
 
+## Verify your setup
+
+Before your first render, run the preflight checker. It verifies every external dependency in one shot and exits with a clear status:
+
+```bash
+python -m deck2video doctor
+```
+
+You'll see a checklist with `✓ / ! / ✗` (or `OK / WARN / FAIL` on non-UTF-8 terminals) for Python version, ffmpeg/ffprobe, marp/slidev, GPU detection, free disk space, and the Chatterbox model cache. Anything marked `✗` is a hard requirement to fix before rendering. Anything marked `!` is informational — common warnings on first run are "marp-cli not installed globally" (npx fallback works fine) and "No chatterbox snapshot in cache" (the model will download on your first TTS run).
+
 ## First run
 
 ### 1. Create a minimal slide deck

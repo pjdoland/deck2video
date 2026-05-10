@@ -115,6 +115,25 @@ This means the parser (or step expansion) found a different number of steps than
 - Rewrite the speaker notes to be simpler and more conversational.
 - Break long notes into shorter sentences.
 
+## Run `deck2video doctor` first
+
+If the pipeline fails before reaching its first step, run `python -m deck2video doctor` for a one-shot check of every external dependency, GPU availability, disk space, and model cache state. It returns non-zero on the first hard failure so it's safe to chain in CI.
+
+## "parsed N slides; --max-slides is M"
+
+deck2video refuses to start a render whose parsed slide count exceeds `--max-slides` (default 500). Common causes:
+
+- A misformatted Markdown file with stray `---` separators that explode into thousands of "slides".
+- A genuinely large deck that needs an explicit override: `--max-slides 1000`.
+
+Markdown files larger than 10 MiB are rejected outright before parse — there's no way to disable that limit short of editing the source.
+
+## "Interrupted (signal 2). Cleaning up child processes…"
+
+Ctrl-C now triggers an orderly shutdown that sends SIGTERM to every active subprocess group (marp, slidev, ffmpeg, Chromium), gives them up to 2 seconds to exit, then SIGKILLs the holdouts. The pipeline then exits with status 130 (128 + SIGINT). Hitting Ctrl-C a second time during cleanup exits immediately via the default handler.
+
+On Windows, only the direct child receives `terminate()`; deeply-nested grandchildren (Chromium under npx under Slidev) may persist briefly.
+
 ## "Only X.YZ GB free in /tmp/...; need at least 5.0 GB"
 
 The pipeline performs a disk-space preflight before starting and aborts if `/tmp` (or your `--temp-dir`) has less than 5 GB free. A typical render produces hundreds of MB of intermediate `.ts` segments plus the final MP4, and concat doubles peak usage briefly.

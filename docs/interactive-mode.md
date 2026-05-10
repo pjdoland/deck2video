@@ -62,6 +62,8 @@ Press `r` to hear the current audio again without regenerating. Useful if you we
 
 Press `q` to stop the pipeline. The process exits with code 0 (clean exit). No video is produced. Temp files may be preserved depending on the error handling path.
 
+Pressing **Ctrl-C** at any prompt also stops the pipeline. The signal handler sends SIGTERM to every active subprocess group (marp, slidev, ffmpeg, Chromium), waits up to 2 seconds for them to exit, then SIGKILLs the holdouts before exiting with status 130. A second Ctrl-C during cleanup exits immediately. The Chatterbox model is moved off GPU memory as part of cleanup. (On Windows, only the direct child receives `terminate()` — Chromium grandchildren may persist briefly.)
+
 ## Platform audio playback
 
 Interactive mode plays audio using your platform's native command:

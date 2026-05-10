@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import process
+
 logger = logging.getLogger(__name__)
 
 # ffprobe is fast; if it takes more than this, something is wrong.
@@ -145,7 +147,7 @@ def get_video_fps(path: Path) -> float:
     audio-only containers, or zero-denominator rates.
     """
     try:
-        result = subprocess.run(
+        result = process.run(
             [
                 "ffprobe",
                 "-v", "quiet",
@@ -193,7 +195,7 @@ def get_video_fps(path: Path) -> float:
 def _get_duration(path: Path) -> float:
     """Get duration of a media file in seconds using ffprobe."""
     try:
-        result = subprocess.run(
+        result = process.run(
             [
                 "ffprobe",
                 "-v", "quiet",

@@ -109,6 +109,10 @@ You'll see:
 
 No user intervention required.
 
+## GPU memory release on exit
+
+deck2video wraps the model load in a context manager that guarantees `model.cpu()` and a torch allocator flush when the pipeline finishes (success, failure, or Ctrl-C). Without this, the model stayed resident in GPU memory until the Python process exited — fine for one-shot CLI runs but a real leak for back-to-back `--redo-slides` invocations in the same process or anyone calling `generate_audio_for_slides` from a longer-lived host. Cleanup is best-effort: a torch internal failure during teardown is logged but not propagated, so the original exception (if any) reaches the user.
+
 ## Sentence splitting
 
 Long speaker notes are split into sentences before synthesis. Sentences are then grouped into chunks of 3 for each TTS call, and the resulting audio is concatenated.

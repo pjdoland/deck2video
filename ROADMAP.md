@@ -12,13 +12,13 @@ Legend: **B**ackend · **S**RE · **P**M · **Sec**urity · **D**X · **M**L · 
 |----|------|:------:|:-----:|:-:|:-:|:-:|:--:|:-:|:-:|:-:|
 | **E08** | Pin dependencies in requirements.txt with hashes | ✅ partial (versions pinned, hashes deferred) | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **E10** | Add timeouts to every subprocess call | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **E13** | Validate input markdown size + --max-slides guardrail | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **E13** | Validate input markdown size + --max-slides guardrail | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **E27** | Validate pronunciation JSON value types & cap size | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **E28** | Sanity-cap padding/hold-duration/fps numeric args | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **F14** | `doctor` preflight subcommand | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **F14** | `doctor` preflight subcommand | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **B05** | get_video_fps crashes on no-video-stream / 0-denom | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **B28** | Ctrl-C leaves orphan child processes (no SIGINT handler) | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **B37** | Model never moved off GPU after pipeline ends | | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **B28** | Ctrl-C leaves orphan child processes (no SIGINT handler) | ✅ done (POSIX; Windows partial) | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **B37** | Model never moved off GPU after pipeline ends | ✅ done | **7/7** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **E15** | Verify concat segments share pix_fmt/timebase before concat | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
 | **E40** | Drop -shortest in favor of explicit -t at frame boundary | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
 | **E46** | Per-slide deterministic seed for reproducible regens | ✅ done | **6/7** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
@@ -212,9 +212,9 @@ Real fix is a normalization pass: re-encode all segments to identical `-video_tr
 
 ## Recommended Sequencing
 
-1. ✅ **First PR** (shipped): all 🟢 easy items as a single "reliability and validation pass".
-2. **Second PR** (~3 days, next up): **E13 + F14 + B28 + B37** — the remaining 7/7 group as a "preflight and lifecycle pass".
-3. **Third PR** (~1 week): **F04 + B17** as an "iteration speed + correctness" bundle (E46 already shipped in pass 1, so cache invalidation can rely on its determinism).
+1. ✅ **First PR** (shipped): all 🟢 easy items as a single "reliability and validation pass" (PR #4).
+2. ✅ **Second PR** (shipped): **E13 + F14 + B28 + B37** — the remaining 7/7 group as a "preflight and lifecycle pass" (this PR).
+3. **Third PR** (~1 week, next up): **F04 + B17** as an "iteration speed + correctness" bundle (E46 already shipped in pass 1, so cache invalidation can rely on its determinism).
 4. **Future**: **F08, F09, B40** each warrant their own design discussion before code.
 
 ## Methodology Notes

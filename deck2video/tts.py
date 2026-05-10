@@ -10,8 +10,10 @@ import re
 import subprocess
 import sys
 import warnings
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
+from . import process
 from .utils import generate_silent_wav
 
 logger = logging.getLogger(__name__)
@@ -89,7 +91,7 @@ def _play_audio(path: Path) -> None:
     else:
         print(f"  Warning: don't know how to play audio on {system}", file=sys.stderr)
         return
-    subprocess.run(cmd, capture_output=True)
+    process.run(cmd, capture_output=True)
 
 
 def _label(item) -> str:
@@ -177,8 +179,14 @@ def _flush_gpu_cache() -> None:
         torch.cuda.empty_cache()
 
 
-def _move_model_to_cpu(model):
-    """Move all TTS model components to CPU and free GPU memory."""
+def _move_model_to_cpu(model) -> None:
+    """Move all TTS model components to CPU and flush GPU memory.
+
+    Used for both the OOM-fallback retry and the end-of-pipeline cleanup
+    (see :func:`loaded_model`). Callers are responsible for any
+    context-specific log/print message — this function only mutates the
+    model's device state.
+    """
     # Access known attributes defensively so this works for both
     # ChatterboxTTS and ChatterboxMultilingualTTS.
     for attr in ("t3", "s3gen", "ve"):
@@ -189,10 +197,35 @@ def _move_model_to_cpu(model):
     if conds is not None:
         conds.to("cpu")
     model.device = "cpu"
-
     _flush_gpu_cache()
-    logger.warning("GPU OOM — moved model to CPU")
-    print("  Moved model to CPU due to GPU memory pressure")
+
+
+@contextmanager
+def loaded_model(device: str = "auto", language: str | None = None):
+    """Load the TTS model and guarantee GPU memory is released on exit.
+
+    Without this, ``model`` stays resident in GPU memory until the Python
+    process exits — fine for one-shot CLI runs, but a real leak for
+    interactive sessions, library callers, or back-to-back ``--redo-slides``
+    invocations in the same process. The context manager pairs every load
+    with a ``model.cpu() + flush_gpu_cache()`` cleanup.
+
+    Cleanup is best-effort: if the model is already half-torn-down (e.g.
+    during a crash) the failure is logged but not re-raised. ``_load_model``
+    is inside the try-block so a partial load (checkpoint downloaded, model
+    construction OOM'd) still triggers a GPU flush.
+    """
+    model = None
+    try:
+        model = _load_model(device, language)
+        yield model
+    finally:
+        if model is not None:
+            try:
+                _move_model_to_cpu(model)
+            except Exception:
+                logger.exception("Failed to move model to CPU during cleanup; ignoring")
+        _flush_gpu_cache()
 
 
 def _seed_for_slide(slide) -> int:
@@ -308,12 +341,46 @@ def generate_audio_for_slides(
     silent WAV of ``hold_duration`` seconds.
 
     If an out-of-memory error occurs on GPU, the model is automatically
-    moved to CPU and the failed slide is retried.
+    moved to CPU and the failed slide is retried. The model is moved to
+    CPU and GPU memory flushed when the function returns (success or
+    failure) — see :func:`loaded_model`.
     """
-    # Only import the heavy model when we actually need TTS.
+    # Only import the heavy model when we actually need TTS. ExitStack lets
+    # us conditionally enter the loaded_model context without duplicating
+    # the rest of the body for the no-TTS path.
     need_tts = any(s.notes for s in slides)
-    model = _load_model(device, language) if need_tts else None
+    with ExitStack() as stack:
+        model = stack.enter_context(loaded_model(device, language)) if need_tts else None
+        return _generate_audio_inner(
+            slides,
+            temp_dir=temp_dir,
+            voice_path=voice_path,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            temperature=temperature,
+            hold_duration=hold_duration,
+            pronunciations=pronunciations,
+            interactive=interactive,
+            language=language,
+            model=model,
+        )
 
+
+def _generate_audio_inner(
+    slides,
+    *,
+    temp_dir: Path,
+    voice_path: str | None,
+    exaggeration: float,
+    cfg_weight: float,
+    temperature: float,
+    hold_duration: float,
+    pronunciations: list[tuple[re.Pattern, str]] | None,
+    interactive: bool,
+    language: str | None,
+    model,
+) -> list[Path]:
+    """Per-slide audio generation loop. Caller owns the model lifecycle."""
     import torch
     import torchaudio
 
@@ -364,7 +431,8 @@ def generate_audio_for_slides(
             except Exception as exc:
                 if on_gpu and _is_oom(exc):
                     # Fall back to CPU and retry this slide
-                    logger.warning("%s: GPU OOM, retrying on CPU", _label(slide))
+                    logger.warning("%s: GPU OOM, moved model to CPU", _label(slide))
+                    print("  Moved model to CPU due to GPU memory pressure")
                     _move_model_to_cpu(model)
                     on_gpu = False
                     try:
