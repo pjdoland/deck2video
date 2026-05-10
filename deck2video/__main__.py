@@ -12,6 +12,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
+from . import process
 from .assembler import assemble_video
 from .detect import detect_format
 from .marp_parser import parse_marp
@@ -28,6 +29,15 @@ logger = logging.getLogger(__name__)
 # 10-min 1080p screencast .ts segment can be 150–300 MB, and concat
 # doubles peak usage briefly, so 5 GB is a realistic floor for typical decks.
 MIN_FREE_DISK_GB = 5.0
+
+# Markdown size cap. A real-world Marp/Slidev deck is well under this.
+# Anything larger is almost certainly a misuse (or an attacker trying to
+# starve the renderer for memory).
+MAX_INPUT_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+# Default upper bound on slide count to keep accidental runs from kicking
+# off multi-hour renders. Override with --max-slides.
+DEFAULT_MAX_SLIDES = 500
 
 # Flags whose value is only meaningful when the TTS phase actually runs.
 # Used by --reassemble to warn about ignored input.
@@ -311,10 +321,47 @@ def _parse_slides(input_path: Path, fmt: str) -> list:
         return parse_marp(str(input_path))
 
 
+def _enforce_max_slides(slides: list, max_slides: int) -> None:
+    """Refuse to proceed if the parsed deck exceeds ``--max-slides``.
+
+    Prevents accidental multi-hour renders from a runaway / misformatted
+    deck. The cap also bounds memory use during step expansion and PNG
+    rendering. Override with ``--max-slides``.
+    """
+    if len(slides) > max_slides:
+        print(
+            f"Error: parsed {len(slides)} slides; --max-slides is {max_slides}. "
+            "If this is intentional, raise the limit with --max-slides N.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main() -> None:
+    # Catch Ctrl-C and SIGTERM so subprocess process groups (marp/slidev/
+    # ffmpeg/Chromium) are reaped cleanly instead of orphaned.
+    process.install_signal_cleanup()
+
+    # Subcommand routing: `doctor` is the only special case today.
+    # Detected before argparse so the positional `input` arg doesn't
+    # require restructuring into a full subparser tree. We require an
+    # exact `["deck2video", "doctor"]` so a deck named "doctor.md" still
+    # routes to the normal pipeline, and stray flags like `doctor --help`
+    # don't get silently swallowed.
+    if sys.argv[1:] == ["doctor"]:
+        from .doctor import run_doctor
+        sys.exit(run_doctor())
+    if len(sys.argv) >= 2 and sys.argv[1] == "doctor":
+        print(
+            "Error: 'doctor' takes no arguments. Run as 'deck2video doctor'.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     parser = argparse.ArgumentParser(
         prog="deck2video",
-        description="Convert a Marp or Slidev markdown presentation into a narrated MP4 video.",
+        description="Convert a Marp or Slidev markdown presentation into a narrated MP4 video. "
+                    "Use 'deck2video doctor' to verify your environment before rendering.",
     )
     parser.add_argument("input", help="Path to the Marp or Slidev .md file")
     parser.add_argument("--output", help="Output MP4 path (default: <input>.mp4)")
@@ -352,6 +399,10 @@ def main() -> None:
     parser.add_argument("--dark", action="store_true",
                         help="Render Slidev slides in dark mode (passes --dark to slidev export; "
                              "ignored for Marp presentations)")
+    parser.add_argument("--max-slides", type=_ranged_int(1, 100000, "--max-slides"),
+                        default=DEFAULT_MAX_SLIDES, metavar="N",
+                        help=f"Refuse to render more than N slides (default: {DEFAULT_MAX_SLIDES}). "
+                             "Prevents runaway renders from a misformatted deck or an attacker.")
 
     rerun_group = parser.add_mutually_exclusive_group()
     rerun_group.add_argument("--reassemble", action="store_true",
@@ -375,6 +426,17 @@ def main() -> None:
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"Error: {input_path} not found.", file=sys.stderr)
+        sys.exit(1)
+
+    # Cap markdown size — anything larger than a few MB is almost certainly
+    # a misuse and would starve the parser/renderer for memory.
+    input_size = input_path.stat().st_size
+    if input_size > MAX_INPUT_BYTES:
+        print(
+            f"Error: {input_path} is {input_size / (1024**2):.1f} MiB; "
+            f"max supported size is {MAX_INPUT_BYTES // (1024**2)} MiB.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     output_path = Path(args.output) if args.output else input_path.with_suffix(".mp4")
@@ -447,6 +509,7 @@ def main() -> None:
             if fmt == "auto":
                 fmt = detect_format(str(input_path))
             slides = _parse_slides(input_path, fmt)
+            _enforce_max_slides(slides, args.max_slides)
             # Expand Slidev slides to steps so video_paths length matches image count
             items = expand_slides_to_steps(slides) if fmt == "slidev" else slides
             video_paths, fps = _resolve_videos_and_fps(items, input_path, args.fps)
@@ -482,6 +545,7 @@ def main() -> None:
 
             print("[redo] Parsing slides…")
             slides = _parse_slides(input_path, fmt)
+            _enforce_max_slides(slides, args.max_slides)
             print(f"  Found {len(slides)} slides")
 
             # For Slidev, expand to steps so indices align with temp files
@@ -647,6 +711,7 @@ def main() -> None:
             print("[1/4] Parsing slides…")
             t0 = time.monotonic()
             slides = _parse_slides(input_path, fmt)
+            _enforce_max_slides(slides, args.max_slides)
             logger.info("[1/4] Parse completed in %.2fs — %d slides", time.monotonic() - t0, len(slides))
 
             # For Slidev, expand slides into per-click steps

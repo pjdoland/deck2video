@@ -156,11 +156,18 @@ python -m deck2video <input.md> [options]
 | `--pronunciations` | none | JSON file mapping words to phonetic respellings |
 | `--audio-padding` | `0` | Milliseconds of silence before and after each slide's audio (0–60000) |
 | `--with-clicks-audio-padding` | `0` | Milliseconds of silence around each click-step's audio (Slidev only, 0–60000) |
+| `--max-slides` | `500` | Refuse to render decks with more than N slides (1–100000) |
 | `--interactive`, `-i` | off | Review and approve each slide's TTS audio before continuing |
 | `--keep-temp` | off | Preserve intermediate files after rendering |
 | `--dark` | off | Render Slidev slides in dark mode (passes `--dark` to `slidev export`) |
 | `--reassemble` | off | Skip parse/render/TTS; assemble MP4 from existing temp dir files |
 | `--redo-slides` | none | Regenerate TTS for listed slides (e.g. `2,3,7` or `2-5,8`), then reassemble |
+
+There is also a `doctor` subcommand for one-shot environment checks:
+
+```bash
+python -m deck2video doctor   # verify ffmpeg, marp, slidev, GPU, disk, model cache
+```
 
 ### Examples
 

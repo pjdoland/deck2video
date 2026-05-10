@@ -4,7 +4,29 @@
 
 ```
 python -m deck2video <input> [options]
+python -m deck2video doctor
 ```
+
+## Subcommands
+
+### `doctor`
+
+Run preflight checks (ffmpeg, ffprobe, marp, slidev, GPU, disk space, model cache) and exit. Useful before kicking off a long render or after a fresh install. Returns 0 when all required checks pass, 1 otherwise.
+
+```
+$ python -m deck2video doctor
+deck2video doctor — preflight checks
+
+  ✓  python            Python 3.11.14
+  ✓  ffmpeg            ffmpeg version 8.0.1
+  ✓  ffprobe           ffprobe available
+  !  marp-cli          marp-cli not installed globally; will fall back to npx
+  ✓  gpu               Apple MPS available
+  ✓  disk              42.1 GB free in /tmp
+  !  chatterbox cache  No chatterbox snapshot — model will download on first run
+```
+
+The doctor takes no arguments. On Windows or `LANG=C` terminals the unicode sigils fall back to `OK / WARN / FAIL`.
 
 ## Positional arguments
 
@@ -161,6 +183,16 @@ Milliseconds of silence added before and after each slide's audio.
 - **Range:** 0–60000 (values outside the range are rejected at parse time)
 - **Details:** A value of 300 adds 300ms before and 300ms after, extending each slide by 600ms total. See [Video Assembly](video-assembly.md#audio-padding).
 - **Example:** `--audio-padding 300`
+
+### `--max-slides`
+
+Refuse to render decks with more than N slides.
+
+- **Type:** integer
+- **Default:** `500`
+- **Range:** 1–100000
+- **Details:** Acts as a guardrail against accidental multi-hour renders from a misformatted or runaway deck. Override with a higher value if you genuinely need to render a long deck. Markdown files larger than 10 MiB are rejected outright before parse.
+- **Example:** `--max-slides 1000`
 
 ### `--with-clicks-audio-padding`
 
