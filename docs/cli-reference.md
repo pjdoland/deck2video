@@ -86,6 +86,35 @@ Preserve intermediate files after a successful run.
 
 ## TTS options
 
+### `--tts-engine`
+
+Which text-to-speech backend to use.
+
+- **Type:** choice
+- **Choices:** `chatterbox`, `elevenlabs`
+- **Default:** `chatterbox`
+- **Details:** `chatterbox` runs a local neural model (CPU/GPU). `elevenlabs` calls the hosted [ElevenLabs](https://elevenlabs.io) API: it requires the `ELEVENLABS_API_KEY` environment variable and `--elevenlabs-voice-id`. The Chatterbox-only flags (`--voice`, `--device`, `--exaggeration`, `--cfg-weight`, `--temperature`, `--language`) have no effect when the ElevenLabs engine is selected. See [Voice and TTS](voice-and-tts.md#tts-engines).
+- **Example:** `--tts-engine elevenlabs`
+
+### `--elevenlabs-voice-id`
+
+ElevenLabs voice ID to narrate with.
+
+- **Type:** string
+- **Default:** none
+- **Required:** when `--tts-engine elevenlabs`
+- **Details:** Find voice IDs in your ElevenLabs voice library. The API key is read from the `ELEVENLABS_API_KEY` environment variable (never a flag, so it stays out of shell history).
+- **Example:** `--elevenlabs-voice-id 21m00Tcm4TlvDq8ikWAM`
+
+### `--elevenlabs-model`
+
+ElevenLabs model ID.
+
+- **Type:** string
+- **Default:** `eleven_multilingual_v2`
+- **Details:** Other common options: `eleven_turbo_v2_5` (faster/cheaper), `eleven_flash_v2_5` (lowest latency). Only used when `--tts-engine elevenlabs`.
+- **Example:** `--elevenlabs-model eleven_turbo_v2_5`
+
 ### `--voice`
 
 Path to a reference WAV file for Chatterbox voice cloning.

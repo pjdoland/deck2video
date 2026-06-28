@@ -98,6 +98,37 @@ else
     fi
 fi
 
+# ── TTS engine selection (at least one required) ────────────────────────────
+#
+# Both engines are optional and heavy in different ways: Chatterbox pulls in
+# torch (a large download) but runs locally; ElevenLabs is a tiny SDK but calls
+# a paid hosted API. deck2video needs at least one, so loop until the user
+# picks something rather than leaving them with a tool that can't synthesize.
+
+INSTALL_CHATTERBOX=false
+INSTALL_ELEVENLABS=false
+
+while true; do
+    INSTALL_CHATTERBOX=false
+    INSTALL_ELEVENLABS=false
+
+    echo ""
+    echo "Choose at least one TTS engine:"
+
+    printf "  Install Chatterbox? (local neural model, default engine, large download) [y/N] "
+    read -r answer
+    [[ "$answer" =~ ^[Yy]$ ]] && INSTALL_CHATTERBOX=true
+
+    printf "  Install ElevenLabs? (hosted API, small SDK, needs ELEVENLABS_API_KEY) [y/N] "
+    read -r answer
+    [[ "$answer" =~ ^[Yy]$ ]] && INSTALL_ELEVENLABS=true
+
+    if $INSTALL_CHATTERBOX || $INSTALL_ELEVENLABS; then
+        break
+    fi
+    warn "deck2video needs a TTS engine. Pick Chatterbox, ElevenLabs, or both."
+done
+
 # ── Virtual environment ─────────────────────────────────────────────────────
 
 echo ""
@@ -124,7 +155,21 @@ echo "Installing Python dependencies (this may take a while on first run)…"
 
 "$PIP" install --upgrade pip --quiet
 "$PIP" install -r requirements.txt --quiet
-info "All packages installed"
+info "Core packages installed"
+
+if $INSTALL_CHATTERBOX; then
+    echo ""
+    echo "Installing Chatterbox TTS (this downloads torch and may take a while)…"
+    "$PIP" install -r requirements-chatterbox.txt --quiet
+    info "Chatterbox TTS installed"
+fi
+
+if $INSTALL_ELEVENLABS; then
+    echo ""
+    echo "Installing ElevenLabs TTS support…"
+    "$PIP" install -r requirements-elevenlabs.txt --quiet
+    info "ElevenLabs SDK installed"
+fi
 
 # ── Slidev installation ───────────────────────────────────────────────────────
 
@@ -158,7 +203,13 @@ info "Activated $VENV_DIR"
 
 echo ""
 echo "Setup complete. You're ready to go:"
-echo "  python -m deck2video presentation.md --voice path/to/voice.wav"
+if $INSTALL_CHATTERBOX; then
+    echo "  python -m deck2video presentation.md --voice path/to/voice.wav"
+fi
+if $INSTALL_ELEVENLABS; then
+    echo "  export ELEVENLABS_API_KEY=sk_..."
+    echo "  python -m deck2video presentation.md --tts-engine elevenlabs --elevenlabs-voice-id <id>"
+fi
 echo ""
 
 # Restore the caller's prior shell options so sourcing this script doesn't

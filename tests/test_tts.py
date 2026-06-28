@@ -536,6 +536,33 @@ class TestInteractiveMode:
 # _load_model
 # ---------------------------------------------------------------------------
 
+class TestChatterboxMissing:
+    """The Chatterbox engine is an optional install; a missing stack should
+    raise a helpful error pointing at requirements-chatterbox.txt rather than a
+    raw ModuleNotFoundError."""
+
+    def test_missing_torch_raises_helpful_error(self):
+        from deck2video.tts import _load_model
+        # Mapping a module to None makes `import <name>` raise ImportError.
+        with patch.dict("sys.modules", {"torch": None, "torchaudio": None}):
+            with pytest.raises(RuntimeError, match="requirements-chatterbox.txt"):
+                _load_model("cpu")
+
+    def test_missing_chatterbox_raises_helpful_error(self):
+        from deck2video.tts import _load_model
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends.mps.is_available.return_value = False
+        with patch.dict("sys.modules", {
+            "torch": mock_torch,
+            "torchaudio": MagicMock(),
+            "chatterbox": None,
+            "chatterbox.tts": None,
+        }):
+            with pytest.raises(RuntimeError, match="requirements-chatterbox.txt"):
+                _load_model("cpu")
+
+
 class TestLoadModel:
     def test_load_model_calls_from_pretrained(self):
         from deck2video.tts import _load_model

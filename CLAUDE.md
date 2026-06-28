@@ -57,7 +57,7 @@ The pipeline is orchestrated by `__main__.py` and flows through four modules in 
 0. **detect.py** -- Auto-detects format (`"marp"` or `"slidev"`) by checking YAML frontmatter keys, directive comments, and Vue component syntax. Falls back to Marp. Skipped when `--format` is explicit.
 1. **marp_parser.py** / **slidev_parser.py** -- Splits markdown on `---` delimiters, extracts speaker notes from `<!-- -->` HTML comments into `Slide` dataclasses (index, body, notes). The Slidev parser additionally strips per-slide frontmatter and does not filter Marp-style directive comments.
 2. **marp_renderer.py** / **slidev_renderer.py** -- Calls marp-cli or Slidev CLI (via npx or global install) to produce one PNG per slide. Marp output: `slides.001`, `slides.002`, etc. (no extension). Slidev output: `slides.001.png`, `slides.002.png`, etc.
-3. **tts.py** -- Synthesizes each slide's notes with Chatterbox TTS. Long notes are split by sentence and each sentence is generated separately, then concatenated with `torch.cat` into one WAV per slide. Slides without notes get a silent WAV. An optional pronunciation mapping (JSON) applies case-insensitive text substitutions before synthesis to correct mispronounced terms.
+3. **tts.py** / **elevenlabs_tts.py** -- Synthesizes each slide's notes to one WAV per slide. The engine is chosen with `--tts-engine` (default `chatterbox`). The Chatterbox backend (`tts.py`) runs a local model: long notes are split by sentence and each sentence is generated separately, then concatenated with `torch.cat`. The ElevenLabs backend (`elevenlabs_tts.py`) calls the hosted API (one request per slide, requesting `pcm_24000` wrapped in a WAV header via `utils.write_pcm_wav`); it needs the `ELEVENLABS_API_KEY` env var and `--elevenlabs-voice-id`, and lazy-imports the `elevenlabs` SDK. Both backends produce identical `audio_NNN.wav` outputs and share the pronunciation/silent-slide/interactive helpers. Slides without notes get a silent WAV. `__main__._generate_audio` dispatches to the selected backend.
 4. **assembler.py** -- Creates per-slide MPEG-TS segments (image looped for audio duration) then concatenates into the final MP4 using ffmpeg's concat demuxer.
 
 **utils.py** provides shared helpers: ffmpeg/ffprobe checks, silent WAV generation, and audio duration queries.
@@ -73,7 +73,13 @@ The pipeline is orchestrated by `__main__.py` and flows through four modules in 
 
 ## System Dependencies
 
-Python 3.11, Node.js/npm (for marp-cli via npx), ffmpeg/ffprobe. The `setup.sh` script validates all of these, creates the venv, and installs Python packages. For Slidev support: `npm install -g @slidev/cli` and playwright-chromium (installed via `npx playwright install chromium`).
+Python 3.11, Node.js/npm (for marp-cli via npx), ffmpeg/ffprobe. The `setup.sh` script validates all of these, creates the venv, and installs the core Python packages (`requirements.txt`). For Slidev support: `npm install -g @slidev/cli` and playwright-chromium (installed via `npx playwright install chromium`).
+
+The two TTS engines are **optional** and split into separate requirements files so you install only what you use; `setup.sh` prompts you to pick at least one:
+- **Chatterbox** (default, `--tts-engine chatterbox`): `requirements-chatterbox.txt` — `chatterbox-tts`, `torch`, `torchaudio` (large download, runs locally). If the engine is selected but not installed, `tts.py` raises a `RuntimeError` pointing at `requirements-chatterbox.txt`.
+- **ElevenLabs** (`--tts-engine elevenlabs`): `requirements-elevenlabs.txt` — the small `elevenlabs` SDK, plus the `ELEVENLABS_API_KEY` environment variable at runtime. Missing-SDK runs raise a `RuntimeError` with a `pip install` hint.
+
+Both SDKs are lazy-imported, so importing the package or running the other engine never requires the one you didn't install.
 
 ## Tests
 

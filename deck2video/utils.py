@@ -37,13 +37,22 @@ def check_ffmpeg() -> None:
         sys.exit(1)
 
 
-def generate_silent_wav(path: Path, duration: float, sample_rate: int = 24000) -> None:
-    """Write a silent WAV file of the given duration (pure Python, no deps)."""
-    num_channels = 1
-    bits_per_sample = 16
-    num_samples = int(sample_rate * duration)
-    data_size = num_samples * num_channels * (bits_per_sample // 8)
+def write_pcm_wav(
+    path: Path,
+    pcm: bytes,
+    *,
+    sample_rate: int = 24000,
+    num_channels: int = 1,
+    bits_per_sample: int = 16,
+) -> None:
+    """Wrap raw little-endian PCM bytes in a WAV container (pure Python, no deps).
 
+    Used both for silent WAVs (all-zero ``pcm``) and for ElevenLabs ``pcm_*``
+    output, which is signed 16-bit little-endian mono and so needs only a
+    RIFF/WAVE header prepended to be a valid file the rest of the pipeline
+    can probe and assemble.
+    """
+    data_size = len(pcm)
     with open(path, "wb") as f:
         # RIFF header
         f.write(b"RIFF")
@@ -61,7 +70,22 @@ def generate_silent_wav(path: Path, duration: float, sample_rate: int = 24000) -
         # data chunk
         f.write(b"data")
         f.write(struct.pack("<I", data_size))
-        f.write(b"\x00" * data_size)
+        f.write(pcm)
+
+
+def generate_silent_wav(path: Path, duration: float, sample_rate: int = 24000) -> None:
+    """Write a silent WAV file of the given duration (pure Python, no deps)."""
+    num_channels = 1
+    bits_per_sample = 16
+    num_samples = int(sample_rate * duration)
+    data_size = num_samples * num_channels * (bits_per_sample // 8)
+    write_pcm_wav(
+        path,
+        b"\x00" * data_size,
+        sample_rate=sample_rate,
+        num_channels=num_channels,
+        bits_per_sample=bits_per_sample,
+    )
 
 
 def _wav_duration_from_header(path: Path) -> float | None:

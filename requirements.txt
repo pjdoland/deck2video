@@ -1,6 +1,8 @@
-# Pinned to last-tested versions for reproducible installs.
-# To refresh: bump these numbers, run setup.sh, run tests, commit.
-chatterbox-tts==0.1.6
-torch==2.6.0
-torchaudio==2.6.0
+# Core dependencies for deck2video. Pinned to last-tested versions for
+# reproducible installs. To refresh: bump, run setup.sh, run tests, commit.
+#
+# The TTS engines are optional and split into their own files so you install
+# only what you use. setup.sh prompts you to pick at least one:
+#   - requirements-chatterbox.txt  — local Chatterbox model (large; torch)
+#   - requirements-elevenlabs.txt  — hosted ElevenLabs API (small SDK)
 python-frontmatter==1.1.0

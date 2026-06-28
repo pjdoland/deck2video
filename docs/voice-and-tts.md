@@ -1,8 +1,36 @@
 # Voice and TTS
 
-deck2video uses [Chatterbox TTS](https://github.com/resemble-ai/chatterbox) for speech synthesis. Chatterbox is a neural TTS model that supports zero-shot voice cloning from a short audio sample. deck2video loads the model once and synthesizes all slides sequentially.
+deck2video uses [Chatterbox TTS](https://github.com/resemble-ai/chatterbox) for speech synthesis by default. Chatterbox is a neural TTS model that supports zero-shot voice cloning from a short audio sample. deck2video loads the model once and synthesizes all slides sequentially.
 
 The model and its dependencies (torch, torchaudio, chatterbox) are lazy-loaded. They're only imported when at least one slide has speaker notes. If your deck has no notes at all, the TTS model is never loaded.
+
+## TTS engines
+
+Both engines are **optional** and installed separately, so you only pull in what you use. `setup.sh` prompts you to pick at least one; you can also install them by hand (see the Setup column). Pick a backend at runtime with `--tts-engine`:
+
+| Engine | Where it runs | Voice selection | Install |
+|--------|---------------|-----------------|---------|
+| `chatterbox` (default) | Local model (CPU/GPU) | `--voice` reference WAV (optional) | `pip install -r requirements-chatterbox.txt` (large; torch) |
+| `elevenlabs` | Hosted [ElevenLabs](https://elevenlabs.io) API | `--elevenlabs-voice-id` (required) | `pip install -r requirements-elevenlabs.txt` + `ELEVENLABS_API_KEY` env var |
+
+If you select an engine whose dependencies aren't installed, deck2video exits with a clear error pointing at the right requirements file (for Chatterbox) or `pip install` hint (for ElevenLabs) rather than a raw traceback.
+
+### ElevenLabs
+
+```bash
+export ELEVENLABS_API_KEY=sk_...
+python -m deck2video deck.md \
+    --tts-engine elevenlabs \
+    --elevenlabs-voice-id 21m00Tcm4TlvDq8ikWAM
+```
+
+The API key is read from the `ELEVENLABS_API_KEY` environment variable, never a flag, so it stays out of shell history and the log file. The voice ID comes from your ElevenLabs voice library. The model defaults to `eleven_multilingual_v2`; override it with `--elevenlabs-model` (e.g. `eleven_turbo_v2_5` for faster/cheaper synthesis, `eleven_flash_v2_5` for lowest latency).
+
+deck2video requests raw `pcm_24000` audio and wraps it in a WAV container, so ElevenLabs output flows through the rest of the pipeline (probing, padding, assembly) identically to Chatterbox output. One API request is made per slide that has speaker notes; slides without notes still get a local silent WAV with no API call. If a request fails, that slide falls back to silence and the render continues.
+
+The `elevenlabs` Python SDK is an optional dependency: it lives in `requirements-elevenlabs.txt` (not the core `requirements.txt`) and is lazy-imported, so a Chatterbox-only install never needs it. Install it by answering "y" to the ElevenLabs prompt in `setup.sh`, or directly with `pip install -r requirements-elevenlabs.txt`. If you select `--tts-engine elevenlabs` without the SDK installed, deck2video exits with a clear "pip install elevenlabs" hint. `--pronunciations` and `--interactive` work with both engines. The Chatterbox-only flags (`--voice`, `--device`, `--exaggeration`, `--cfg-weight`, `--temperature`, `--language`) have no effect under the ElevenLabs engine.
+
+The rest of this page describes the Chatterbox engine.
 
 ## Voice cloning
 
