@@ -1567,3 +1567,116 @@ class TestRedoSlidesClickChange:
         # Manifest should now exist (written by redo path)
         assert (temp / "steps.json").exists()
 
+
+# ---------------------------------------------------------------------------
+# --tts-engine elevenlabs routing and validation
+# ---------------------------------------------------------------------------
+
+class TestElevenLabsEngine:
+    def _run_main(self, argv, patches):
+        import contextlib
+        from deck2video.__main__ import main
+
+        with patch("sys.argv", argv):
+            with contextlib.ExitStack() as stack:
+                mocks = {}
+                for target, mock_obj in patches.items():
+                    mocks[target] = stack.enter_context(patch(target, mock_obj))
+                main()
+                return mocks
+
+    def test_engine_routes_to_elevenlabs_backend(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.generate_audio_for_slides_elevenlabs": MagicMock(return_value=[
+                Path("/tmp/audio_001.wav"), Path("/tmp/audio_002.wav"),
+            ]),
+        })
+        mocks = self._run_main(
+            ["deck2video", str(md), "--tts-engine", "elevenlabs",
+             "--elevenlabs-voice-id", "voice123"],
+            patches,
+        )
+
+        # ElevenLabs backend used; Chatterbox backend untouched.
+        mocks["deck2video.__main__.generate_audio_for_slides_elevenlabs"].assert_called_once()
+        mocks["deck2video.__main__.generate_audio_for_slides"].assert_not_called()
+
+        gen = mocks["deck2video.__main__.generate_audio_for_slides_elevenlabs"]
+        assert gen.call_args.kwargs["voice_id"] == "voice123"
+        assert gen.call_args.kwargs["api_key"] == "test-key"
+        assert gen.call_args.kwargs["model_id"] == "eleven_multilingual_v2"
+
+    def test_custom_model_passed_through(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.generate_audio_for_slides_elevenlabs": MagicMock(return_value=[
+                Path("/tmp/audio_001.wav"), Path("/tmp/audio_002.wav"),
+            ]),
+        })
+        mocks = self._run_main(
+            ["deck2video", str(md), "--tts-engine", "elevenlabs",
+             "--elevenlabs-voice-id", "v", "--elevenlabs-model", "eleven_flash_v2_5"],
+            patches,
+        )
+        gen = mocks["deck2video.__main__.generate_audio_for_slides_elevenlabs"]
+        assert gen.call_args.kwargs["model_id"] == "eleven_flash_v2_5"
+
+    def test_missing_api_key_exits(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+        from deck2video.__main__ import main
+        with patch("deck2video.__main__.check_ffmpeg"):
+            with patch("sys.argv", ["deck2video", str(md), "--tts-engine", "elevenlabs",
+                                    "--elevenlabs-voice-id", "v"]):
+                with pytest.raises(SystemExit):
+                    main()
+        assert "ELEVENLABS_API_KEY" in capsys.readouterr().err
+
+    def test_missing_voice_id_exits(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+        md = tmp_path / "deck.md"
+        md.write_text("# Slide\n")
+        from deck2video.__main__ import main
+        with patch("deck2video.__main__.check_ffmpeg"):
+            with patch("sys.argv", ["deck2video", str(md), "--tts-engine", "elevenlabs"]):
+                with pytest.raises(SystemExit):
+                    main()
+        assert "elevenlabs-voice-id" in capsys.readouterr().err
+
+    def test_default_engine_is_chatterbox(self, tmp_path):
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+        patches = _patch_pipeline(**{
+            "deck2video.__main__.generate_audio_for_slides_elevenlabs": MagicMock(),
+        })
+        mocks = self._run_main(["deck2video", str(md)], patches)
+        mocks["deck2video.__main__.generate_audio_for_slides"].assert_called_once()
+        mocks["deck2video.__main__.generate_audio_for_slides_elevenlabs"].assert_not_called()
+
+    def test_reassemble_skips_elevenlabs_validation(self, tmp_path, monkeypatch):
+        """--reassemble must not require ELEVENLABS_API_KEY (TTS phase is skipped)."""
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        md = tmp_path / "deck.md"
+        md.write_text("---\nmarp: true\n---\n\n# Slide\n")
+        temp = tmp_path / "build"
+        temp.mkdir()
+        for i in range(1, 3):
+            (temp / f"slides.{i:03d}.png").touch()
+            (temp / f"audio_{i:03d}.wav").touch()
+
+        patches = _patch_pipeline()
+        # Should not raise despite engine=elevenlabs and no API key.
+        self._run_main(
+            ["deck2video", str(md), "--reassemble", "--temp-dir", str(temp),
+             "--tts-engine", "elevenlabs"],
+            patches,
+        )
+

@@ -1,0 +1,8 @@
+# Optional dependency for the ElevenLabs TTS backend (--tts-engine elevenlabs).
+# Not needed for the default Chatterbox engine; the SDK is lazy-imported so it's
+# only required when you actually select the ElevenLabs engine.
+#
+# Install with: pip install -r requirements-elevenlabs.txt
+#
+# Pinned to last-tested version. To refresh: bump, run setup.sh, run tests, commit.
+elevenlabs==2.54.0

@@ -15,7 +15,9 @@ python -m deck2video presentation.md --voice voice-sample.wav
 ```
 
 The setup script checks for system dependencies, creates a Python 3.11 virtual
-environment, installs packages, and activates the venv in your shell.
+environment, installs the core packages, and activates the venv in your shell.
+It also prompts you to choose at least one TTS engine (see below) since both are
+optional installs.
 
 ## Documentation
 
@@ -36,6 +38,10 @@ Detailed guides covering every feature and workflow:
 - **Python 3.11**
 - **Node.js / npm** (for marp-cli via npx)
 - **ffmpeg**
+
+A TTS engine (at least one; `setup.sh` prompts you to pick):
+- **Chatterbox** (default, local model): `pip install -r requirements-chatterbox.txt` (large; pulls in torch)
+- **ElevenLabs** (hosted API): `pip install -r requirements-elevenlabs.txt`, plus an `ELEVENLABS_API_KEY` environment variable
 
 For Slidev presentations (optional):
 - **@slidev/cli** (`npm install -g @slidev/cli`)
@@ -144,7 +150,10 @@ python -m deck2video <input.md> [options]
 |------|---------|-------------|
 | `--format` | `auto` | Presentation format: `auto`, `marp`, or `slidev` |
 | `--output` | `<input>.mp4` | Output file path |
-| `--voice` | none | Reference WAV for voice cloning |
+| `--tts-engine` | `chatterbox` | TTS backend: `chatterbox` (local) or `elevenlabs` (hosted API) |
+| `--elevenlabs-voice-id` | none | ElevenLabs voice ID (required with `--tts-engine elevenlabs`) |
+| `--elevenlabs-model` | `eleven_multilingual_v2` | ElevenLabs model ID |
+| `--voice` | none | Reference WAV for Chatterbox voice cloning |
 | `--language` | none | Language code for multilingual TTS (e.g. `fr`, `zh`, `de`) |
 | `--device` | `auto` | Torch device: `auto`, `cpu`, `cuda`, `mps` |
 | `--exaggeration` | `0.5` | Chatterbox vocal exaggeration |
@@ -193,6 +202,12 @@ python -m deck2video deck.md \
 python -m deck2video deck.md \
     --voice ~/models/my-voice.wav \
     --pronunciations pronunciations.json
+
+# Use the ElevenLabs hosted API instead of the local Chatterbox model
+export ELEVENLABS_API_KEY=sk_...
+python -m deck2video deck.md \
+    --tts-engine elevenlabs \
+    --elevenlabs-voice-id 21m00Tcm4TlvDq8ikWAM
 
 # Explicit Slidev format
 python -m deck2video slidev-deck.md --format slidev --voice voice.wav

@@ -1,0 +1,10 @@
+# Chatterbox TTS engine (the default; --tts-engine chatterbox). This is a large
+# install: torch plus the model dependencies. Optional — install only if you
+# want local, offline speech synthesis with voice cloning.
+#
+# Install with: pip install -r requirements-chatterbox.txt
+#
+# Pinned to last-tested versions. To refresh: bump, run setup.sh, run tests, commit.
+chatterbox-tts==0.1.6
+torch==2.6.0
+torchaudio==2.6.0

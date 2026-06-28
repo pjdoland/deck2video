@@ -48,7 +48,7 @@ npx playwright install chromium
 
 ## Running setup.sh
 
-`setup.sh` checks for system dependencies, creates a Python 3.11 virtual environment, installs packages, and activates the venv in your current shell. It also asks whether you want to install Slidev support (the Slidev CLI and Playwright Chromium).
+`setup.sh` checks for system dependencies, creates a Python 3.11 virtual environment, installs the core packages, and activates the venv in your current shell. It also asks whether you want to install Slidev support (the Slidev CLI and Playwright Chromium), and prompts you to choose at least one TTS engine (Chatterbox, ElevenLabs, or both), since both are optional installs.
 
 You must source the script, not execute it:
 
@@ -67,10 +67,12 @@ What the script does:
 
 1. Checks that `python3.11`, `ffmpeg`, `ffprobe`, and `npx` (or `marp`) are on PATH.
 2. Asks if you want Slidev support (skipped if `slidev` is already installed).
-3. Creates `.venv/` if it doesn't exist (or recreates it if the existing one is broken).
-4. Installs/upgrades pip and all packages from `requirements.txt`.
-5. If you said yes to Slidev: installs `@slidev/cli`, the `playwright-chromium` npm package, and the Chromium browser binary.
-6. Activates the virtual environment.
+3. Prompts you to choose at least one TTS engine (Chatterbox, ElevenLabs, or both).
+4. Creates `.venv/` if it doesn't exist (or recreates it if the existing one is broken).
+5. Installs/upgrades pip and the core packages from `requirements.txt`.
+6. Installs the TTS engine(s) you chose: `requirements-chatterbox.txt` (large; torch) and/or `requirements-elevenlabs.txt`.
+7. If you said yes to Slidev: installs `@slidev/cli`, the `playwright-chromium` npm package, and the Chromium browser binary.
+8. Activates the virtual environment.
 
 After setup completes, you can run deck2video directly:
 

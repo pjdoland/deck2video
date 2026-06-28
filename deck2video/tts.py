@@ -94,6 +94,37 @@ def _play_audio(path: Path) -> None:
     process.run(cmd, capture_output=True)
 
 
+def _interactive_review(out_path: Path, label: str, regenerate) -> None:
+    """Play the generated audio and let the user keep/regenerate/replay/quit.
+
+    ``regenerate`` is a zero-arg callable that re-synthesises and overwrites
+    ``out_path`` in place, returning ``True`` on success or ``False`` if it
+    failed (in which case the previous audio is kept). Shared by the
+    Chatterbox and ElevenLabs backends so the review UX stays identical.
+    """
+    _play_audio(out_path)
+    while True:
+        choice = input(
+            f"  {label}: (y) keep  (n) regenerate  (r) replay  (q) quit: "
+        ).strip().lower()
+        if choice in ("", "y"):
+            logger.debug("%s: interactive — kept", label)
+            break
+        if choice == "r":
+            _play_audio(out_path)
+            continue
+        if choice == "q":
+            logger.info("Pipeline quit by user during interactive review")
+            print("  Quitting pipeline.")
+            sys.exit(0)
+        # choice == "n" or anything else: regenerate
+        logger.debug("%s: interactive — regenerating", label)
+        print(f"  Regenerating {label}…")
+        if not regenerate():
+            break
+        _play_audio(out_path)
+
+
 def _label(item) -> str:
     """Return a human-readable label for a Slide or Step."""
     if hasattr(item, "slide_index"):
@@ -137,14 +168,32 @@ def _resolve_device(device: str) -> str:
     return "cpu"
 
 
+# Shared hint shown when the Chatterbox/torch stack isn't installed. The
+# engine is optional (see requirements-chatterbox.txt), so a missing import
+# should point the user at the fix rather than dumping a raw ModuleNotFoundError.
+_CHATTERBOX_MISSING_MSG = (
+    "The Chatterbox TTS engine requires torch, torchaudio, and chatterbox-tts. "
+    "Install them with: pip install -r requirements-chatterbox.txt "
+    "(or re-run setup.sh and choose Chatterbox). Alternatively, use "
+    "--tts-engine elevenlabs."
+)
+
+
 def _load_model(device: str = "auto", language: str | None = None):
     """Load ChatterboxTTS, or ChatterboxMultilingualTTS when language is set."""
-    import torchaudio  # noqa: F401 — ensure it's importable early
+    try:
+        import torch  # noqa: F401
+        import torchaudio  # noqa: F401 — ensure it's importable early
+    except ImportError as exc:
+        raise RuntimeError(_CHATTERBOX_MISSING_MSG) from exc
 
     resolved = _resolve_device(device)
     if language is not None:
         import torch
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+        try:
+            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+        except ImportError as exc:
+            raise RuntimeError(_CHATTERBOX_MISSING_MSG) from exc
         logger.debug("Loading ChatterboxMultilingualTTS on device=%s language=%s", resolved, language)
         print(f"  Loading multilingual TTS model (language: {language})")
         # ChatterboxMultilingualTTS.from_pretrained doesn't honour the device
@@ -161,7 +210,10 @@ def _load_model(device: str = "auto", language: str | None = None):
         finally:
             torch.load = _orig_load
     else:
-        from chatterbox.tts import ChatterboxTTS
+        try:
+            from chatterbox.tts import ChatterboxTTS
+        except ImportError as exc:
+            raise RuntimeError(_CHATTERBOX_MISSING_MSG) from exc
         logger.debug("Loading ChatterboxTTS on device=%s", resolved)
         model = ChatterboxTTS.from_pretrained(device=resolved)
     logger.debug("Model loaded successfully")
@@ -460,37 +512,24 @@ def _generate_audio_inner(
             print(f"  {_label(slide)}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
 
             if interactive:
-                _play_audio(out_path)
-                while True:
-                    choice = input(f"  {_label(slide)}: (y) keep  (n) regenerate  (r) replay  (q) quit: ").strip().lower()
-                    if choice in ("", "y"):
-                        logger.debug("%s: interactive — kept", _label(slide))
-                        break
-                    if choice == "r":
-                        _play_audio(out_path)
-                        continue
-                    if choice == "q":
-                        logger.info("Pipeline quit by user during interactive review")
-                        print("  Quitting pipeline.")
-                        sys.exit(0)
-                    # choice == "n" or anything else: regenerate
-                    # Note: regen currently uses the same deterministic seed,
-                    # so output will be identical. Per-regen seed bumping is
-                    # tracked as a follow-up (B34 in ROADMAP.md).
-                    logger.debug("%s: interactive — regenerating", _label(slide))
-                    print(f"  Regenerating {_label(slide)}…")
+                # Note: regen currently uses the same deterministic seed, so
+                # output will be identical. Per-regen seed bumping is tracked
+                # as a follow-up (B34 in ROADMAP.md).
+                def _regen() -> bool:
                     try:
                         combined, sr, n_sent, n_chunks = _generate_slide_audio(
                             model, slide, text, **tts_kwargs,
                         )
                     except Exception as regen_exc:
                         print(f"  Regeneration failed ({regen_exc}), keeping previous audio.", file=sys.stderr)
-                        break
+                        return False
                     torchaudio.save(str(out_path), combined, sr)
                     del combined
                     _flush_gpu()
                     print(f"  {_label(slide)}: TTS OK ({n_sent} sentence{'s' if n_sent != 1 else ''} in {n_chunks} chunk{'s' if n_chunks != 1 else ''})")
-                    _play_audio(out_path)
+                    return True
+
+                _interactive_review(out_path, _label(slide), _regen)
 
         audio_paths.append(out_path)
 

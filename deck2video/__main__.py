@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -15,6 +16,7 @@ from pathlib import Path
 from . import process
 from .assembler import assemble_video
 from .detect import detect_format
+from .elevenlabs_tts import generate_audio_for_slides_elevenlabs
 from .marp_parser import parse_marp
 from .marp_renderer import render_slides
 from .models import expand_slides_to_steps
@@ -45,6 +47,7 @@ TTS_ONLY_FLAGS = {
     "--voice", "--device", "--exaggeration", "--cfg-weight",
     "--temperature", "--pronunciations", "--interactive", "-i",
     "--language", "--hold-duration",
+    "--tts-engine", "--elevenlabs-voice-id", "--elevenlabs-model",
 }
 
 
@@ -313,6 +316,45 @@ def _apply_audio_renames(
             logger.debug("Moved audio_%03d.wav.tmp → audio_%03d.wav", old_idx, new_idx)
 
 
+def _generate_audio(
+    steps: list,
+    *,
+    args,
+    temp_dir: Path,
+    pronunciations,
+    elevenlabs_api_key: str | None,
+) -> list[Path]:
+    """Dispatch TTS to the selected engine.
+
+    Both backends produce ``audio_NNN.wav`` files in ``temp_dir`` and return
+    the paths in step order, so every call site is engine-agnostic.
+    """
+    common = dict(
+        temp_dir=temp_dir,
+        hold_duration=args.hold_duration,
+        pronunciations=pronunciations,
+        interactive=args.interactive,
+    )
+    if args.tts_engine == "elevenlabs":
+        return generate_audio_for_slides_elevenlabs(
+            steps,
+            voice_id=args.elevenlabs_voice_id,
+            api_key=elevenlabs_api_key,
+            model_id=args.elevenlabs_model,
+            **common,
+        )
+    return generate_audio_for_slides(
+        steps,
+        voice_path=args.voice,
+        device=args.device,
+        exaggeration=args.exaggeration,
+        cfg_weight=args.cfg_weight,
+        temperature=args.temperature,
+        language=args.language,
+        **common,
+    )
+
+
 def _parse_slides(input_path: Path, fmt: str) -> list:
     """Parse slides using the appropriate parser for the detected format."""
     if fmt == "slidev":
@@ -365,6 +407,15 @@ def main() -> None:
     )
     parser.add_argument("input", help="Path to the Marp or Slidev .md file")
     parser.add_argument("--output", help="Output MP4 path (default: <input>.mp4)")
+    parser.add_argument("--tts-engine", choices=["chatterbox", "elevenlabs"], default="chatterbox",
+                        help="Text-to-speech engine: chatterbox (local model, default) or "
+                             "elevenlabs (hosted API; needs ELEVENLABS_API_KEY and "
+                             "--elevenlabs-voice-id)")
+    parser.add_argument("--elevenlabs-voice-id", default=None, metavar="ID",
+                        help="ElevenLabs voice ID to narrate with (required when "
+                             "--tts-engine elevenlabs)")
+    parser.add_argument("--elevenlabs-model", default="eleven_multilingual_v2", metavar="MODEL",
+                        help="ElevenLabs model ID (default: eleven_multilingual_v2)")
     parser.add_argument("--voice", help="Path to a reference WAV for Chatterbox voice cloning")
     parser.add_argument("--language", default=None, metavar="LANG",
                         help="Language code for multilingual TTS, e.g. en, fr, de, zh, es. "
@@ -451,6 +502,26 @@ def main() -> None:
         raw_pronunciations = load_pronunciations(pron_path)
         pronunciations = compile_pronunciations(raw_pronunciations)
         print(f"Loaded {len(raw_pronunciations)} pronunciation override(s)")
+
+    # Resolve and validate ElevenLabs configuration. Only required when the
+    # TTS phase will actually run (i.e. not --reassemble), and the API key
+    # comes from the environment so it never lands in shell history or logs.
+    elevenlabs_api_key = None
+    if args.tts_engine == "elevenlabs" and not args.reassemble:
+        elevenlabs_api_key = os.environ.get("ELEVENLABS_API_KEY")
+        if not elevenlabs_api_key:
+            print(
+                "Error: --tts-engine elevenlabs requires the ELEVENLABS_API_KEY "
+                "environment variable to be set.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not args.elevenlabs_voice_id:
+            print(
+                "Error: --tts-engine elevenlabs requires --elevenlabs-voice-id.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Pre-flight checks
     check_ffmpeg()
@@ -604,18 +675,12 @@ def main() -> None:
                     redo_steps = [s for s in all_steps if s.slide_index in slide_indices_set]
                     print(f"[redo] Regenerating audio for slide(s): {','.join(str(i) for i in slide_indices)}")
                     t0 = time.monotonic()
-                    generate_audio_for_slides(
+                    _generate_audio(
                         redo_steps,
+                        args=args,
                         temp_dir=temp_dir,
-                        voice_path=args.voice,
-                        device=args.device,
-                        exaggeration=args.exaggeration,
-                        cfg_weight=args.cfg_weight,
-                        temperature=args.temperature,
-                        hold_duration=args.hold_duration,
                         pronunciations=pronunciations,
-                        interactive=args.interactive,
-                        language=args.language,
+                        elevenlabs_api_key=elevenlabs_api_key,
                     )
                     logger.info("[redo] Audio regeneration completed in %.2fs", time.monotonic() - t0)
 
@@ -658,18 +723,12 @@ def main() -> None:
                 redo_steps = [s for s in all_steps if s.index in slide_indices_set]
             print(f"[redo] Regenerating audio for slide(s): {','.join(str(i) for i in slide_indices)}")
             t0 = time.monotonic()
-            generate_audio_for_slides(
+            _generate_audio(
                 redo_steps,
+                args=args,
                 temp_dir=temp_dir,
-                voice_path=args.voice,
-                device=args.device,
-                exaggeration=args.exaggeration,
-                cfg_weight=args.cfg_weight,
-                temperature=args.temperature,
-                hold_duration=args.hold_duration,
                 pronunciations=pronunciations,
-                interactive=args.interactive,
-                language=args.language,
+                elevenlabs_api_key=elevenlabs_api_key,
             )
             logger.info("[redo] Audio regeneration completed in %.2fs", time.monotonic() - t0)
 
@@ -749,18 +808,12 @@ def main() -> None:
             # Step 3: Generate audio
             print("[3/4] Generating audio…")
             t0 = time.monotonic()
-            audio_files = generate_audio_for_slides(
+            audio_files = _generate_audio(
                 steps,
+                args=args,
                 temp_dir=temp_dir,
-                voice_path=args.voice,
-                device=args.device,
-                exaggeration=args.exaggeration,
-                cfg_weight=args.cfg_weight,
-                temperature=args.temperature,
-                hold_duration=args.hold_duration,
                 pronunciations=pronunciations,
-                interactive=args.interactive,
-                language=args.language,
+                elevenlabs_api_key=elevenlabs_api_key,
             )
             logger.info("[3/4] Audio generation completed in %.2fs", time.monotonic() - t0)
 
